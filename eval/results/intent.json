@@ -1,0 +1,563 @@
+{
+  "generated_at": "2026-10-23T10:12:11+0800",
+  "mode": "llm",
+  "dataset": "eval\\datasets\\intent_samples.json",
+  "provider": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "thinking": "disabled",
+    "key_env": "DEEPSEEK_API_KEY"
+  },
+  "targets": {
+    "accuracy": 0.9,
+    "macro_f1": 0.88
+  },
+  "labels": [
+    "labor_law",
+    "civil_code",
+    "general",
+    "greeting",
+    "other"
+  ],
+  "metrics": {
+    "accuracy": 1.0,
+    "macro_f1": 1.0,
+    "correct": 20,
+    "total": 20,
+    "per_class": {
+      "labor_law": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "civil_code": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "general": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "greeting": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      },
+      "other": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 4
+      }
+    },
+    "confusion": {
+      "labor_law": {
+        "labor_law": 4,
+        "civil_code": 0,
+        "general": 0,
+        "greeting": 0,
+        "other": 0
+      },
+      "civil_code": {
+        "labor_law": 0,
+        "civil_code": 4,
+        "general": 0,
+        "greeting": 0,
+        "other": 0
+      },
+      "general": {
+        "labor_law": 0,
+        "civil_code": 0,
+        "general": 4,
+        "greeting": 0,
+        "other": 0
+      },
+      "greeting": {
+        "labor_law": 0,
+        "civil_code": 0,
+        "general": 0,
+        "greeting": 4,
+        "other": 0
+      },
+      "other": {
+        "labor_law": 0,
+        "civil_code": 0,
+        "general": 0,
+        "greeting": 0,
+        "other": 4
+      }
+    },
+    "latency_ms": {
+      "mean": 955.0,
+      "p50": 970.0,
+      "p95": 1291.0,
+      "max": 1563.0
+    },
+    "source": {
+      "llm": 20
+    },
+    "rewrite_type": {
+      "direct": 15,
+      "decompose": 5
+    },
+    "passed": true
+  },
+  "baseline_rules": {
+    "accuracy": 0.6,
+    "macro_f1": 0.6029,
+    "correct": 12,
+    "total": 20,
+    "per_class": {
+      "labor_law": {
+        "precision": 0.5714,
+        "recall": 1.0,
+        "f1": 0.7273,
+        "support": 4
+      },
+      "civil_code": {
+        "precision": 1.0,
+        "recall": 0.75,
+        "f1": 0.8571,
+        "support": 4
+      },
+      "general": {
+        "precision": 0.2857,
+        "recall": 0.5,
+        "f1": 0.3636,
+        "support": 4
+      },
+      "greeting": {
+        "precision": 1.0,
+        "recall": 0.5,
+        "f1": 0.6667,
+        "support": 4
+      },
+      "other": {
+        "precision": 1.0,
+        "recall": 0.25,
+        "f1": 0.4,
+        "support": 4
+      }
+    },
+    "confusion": {
+      "labor_law": {
+        "labor_law": 4,
+        "civil_code": 0,
+        "general": 0,
+        "greeting": 0,
+        "other": 0
+      },
+      "civil_code": {
+        "labor_law": 1,
+        "civil_code": 3,
+        "general": 0,
+        "greeting": 0,
+        "other": 0
+      },
+      "general": {
+        "labor_law": 2,
+        "civil_code": 0,
+        "general": 2,
+        "greeting": 0,
+        "other": 0
+      },
+      "greeting": {
+        "labor_law": 0,
+        "civil_code": 0,
+        "general": 2,
+        "greeting": 2,
+        "other": 0
+      },
+      "other": {
+        "labor_law": 0,
+        "civil_code": 0,
+        "general": 3,
+        "greeting": 0,
+        "other": 1
+      }
+    }
+  },
+  "rows": [
+    {
+      "id": "L01",
+      "query": "试用期最长可以约定多久？",
+      "label": "labor_law",
+      "prediction": "labor_law",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": true,
+      "structured_topic": "试用期",
+      "law_hints": [
+        "中华人民共和国劳动合同法"
+      ],
+      "sub_queries": [
+        "劳动合同法对试用期最长可以约定多久的规定"
+      ],
+      "latency_ms": 1563
+    },
+    {
+      "id": "L02",
+      "query": "老板让我周末来加班，加班费到底按几倍给？",
+      "label": "labor_law",
+      "prediction": "labor_law",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": true,
+      "structured_topic": "加班费",
+      "law_hints": [
+        "中华人民共和国劳动法",
+        "中华人民共和国劳动合同法"
+      ],
+      "sub_queries": [
+        "休息日安排劳动者加班又不能安排补休的，加班费按工资的几倍支付"
+      ],
+      "latency_ms": 855
+    },
+    {
+      "id": "L03",
+      "query": "公司经营困难把我裁了，经济补偿按工作年限怎么算，n+1 是什么意思？",
+      "label": "labor_law",
+      "prediction": "labor_law",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "decompose",
+      "complexity": "complex",
+      "hit_structured": true,
+      "structured_topic": "经济补偿",
+      "law_hints": [
+        "中华人民共和国劳动合同法",
+        "中华人民共和国劳动法"
+      ],
+      "sub_queries": [
+        "用人单位因经营困难裁减人员，经济补偿按劳动者工作年限如何计算",
+        "劳动合同法第四十七条经济补偿计算标准与N+1中代通知金的适用情形"
+      ],
+      "latency_ms": 1291
+    },
+    {
+      "id": "L04",
+      "query": "签了竞业限制协议，离职后公司一直不发补偿金，这个协议还有效吗",
+      "label": "labor_law",
+      "prediction": "labor_law",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "medium",
+      "hit_structured": true,
+      "structured_topic": "竞业限制",
+      "law_hints": [
+        "中华人民共和国劳动合同法"
+      ],
+      "sub_queries": [
+        "用人单位未支付竞业限制经济补偿，竞业限制协议是否仍然有效"
+      ],
+      "latency_ms": 1047
+    },
+    {
+      "id": "C01",
+      "query": "离婚时婚前一方买的房子怎么分割？",
+      "label": "civil_code",
+      "prediction": "civil_code",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "medium",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "离婚时婚前一方购买的房产如何分割，是否属于夫妻共同财产"
+      ],
+      "latency_ms": 995
+    },
+    {
+      "id": "C02",
+      "query": "租房到期房东以墙面有污渍为由不退押金，我能起诉吗",
+      "label": "civil_code",
+      "prediction": "civil_code",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "租赁合同到期后房东以墙面污渍为由拒绝退还押金，承租人能否起诉要求返还押金"
+      ],
+      "latency_ms": 1085
+    },
+    {
+      "id": "C03",
+      "query": "朋友借钱写了借条但没写利息，到期后我能主张利息吗？",
+      "label": "civil_code",
+      "prediction": "civil_code",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "借条未约定利息，借款到期后出借人能否主张利息"
+      ],
+      "latency_ms": 840
+    },
+    {
+      "id": "C04",
+      "query": "父亲去世没留遗嘱，遗产应该按什么顺序由谁继承？",
+      "label": "civil_code",
+      "prediction": "civil_code",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "无遗嘱情形下法定继承的继承顺序和继承人范围"
+      ],
+      "latency_ms": 901
+    },
+    {
+      "id": "G01",
+      "query": "劳动合同里的违约金条款和民法典关于格式条款的规定，哪个优先适用？",
+      "label": "general",
+      "prediction": "general",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "decompose",
+      "complexity": "complex",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国劳动合同法",
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "劳动合同中的违约金条款是否适用劳动合同法第25条的限制",
+        "民法典格式条款规定与劳动合同违约金条款的适用关系及优先顺序"
+      ],
+      "latency_ms": 1040
+    },
+    {
+      "id": "G02",
+      "query": "同样是欺诈，劳动合同欺诈和房屋买卖欺诈的法律后果有什么区别？",
+      "label": "general",
+      "prediction": "general",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "decompose",
+      "complexity": "complex",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国劳动合同法",
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "劳动合同欺诈的法律后果及劳动合同效力认定",
+        "房屋买卖欺诈的法律后果及合同撤销权行使"
+      ],
+      "latency_ms": 1072
+    },
+    {
+      "id": "G03",
+      "query": "打民事官司和行政诉讼在流程上有什么区别？",
+      "label": "general",
+      "prediction": "general",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "decompose",
+      "complexity": "complex",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "民事诉讼一审流程包括起诉、受理、审理、判决等阶段",
+        "行政诉讼一审流程包括起诉、受理、审理、判决等阶段",
+        "民事诉讼与行政诉讼在起诉条件、举证责任、审理期限上的区别"
+      ],
+      "latency_ms": 1205
+    },
+    {
+      "id": "G04",
+      "query": "法律上的欺诈和刑法里的诈骗罪怎么区分？",
+      "label": "general",
+      "prediction": "general",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "decompose",
+      "complexity": "medium",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [
+        "中华人民共和国民法典"
+      ],
+      "sub_queries": [
+        "民法典中欺诈的构成要件与法律效果",
+        "刑法中诈骗罪的构成要件与认定标准",
+        "民事欺诈与诈骗罪的区别"
+      ],
+      "latency_ms": 858
+    },
+    {
+      "id": "R01",
+      "query": "你好",
+      "label": "greeting",
+      "prediction": "greeting",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "你好"
+      ],
+      "latency_ms": 594
+    },
+    {
+      "id": "R02",
+      "query": "在吗？",
+      "label": "greeting",
+      "prediction": "greeting",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "在吗？"
+      ],
+      "latency_ms": 606
+    },
+    {
+      "id": "R03",
+      "query": "早上好，谢谢你的帮助",
+      "label": "greeting",
+      "prediction": "greeting",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "早上好，谢谢你的帮助"
+      ],
+      "latency_ms": 970
+    },
+    {
+      "id": "R04",
+      "query": "hi，我又来了",
+      "label": "greeting",
+      "prediction": "greeting",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "hi，我又来了"
+      ],
+      "latency_ms": 970
+    },
+    {
+      "id": "O01",
+      "query": "今天天气怎么样？",
+      "label": "other",
+      "prediction": "other",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "今天天气怎么样"
+      ],
+      "latency_ms": 693
+    },
+    {
+      "id": "O02",
+      "query": "推荐几部好看的悬疑电影",
+      "label": "other",
+      "prediction": "other",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "推荐悬疑电影"
+      ],
+      "latency_ms": 813
+    },
+    {
+      "id": "O03",
+      "query": "帮我写一段 Python 快速排序代码",
+      "label": "other",
+      "prediction": "other",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "Python 快速排序代码实现"
+      ],
+      "latency_ms": 507
+    },
+    {
+      "id": "O04",
+      "query": "你能做什么？",
+      "label": "other",
+      "prediction": "other",
+      "ok": true,
+      "source": "llm",
+      "rewrite_type": "direct",
+      "complexity": "simple",
+      "hit_structured": false,
+      "structured_topic": null,
+      "law_hints": [],
+      "sub_queries": [
+        "法律问答系统的功能与能力范围"
+      ],
+      "latency_ms": 1194
+    }
+  ]
+}

@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "description": "意图识别评估样本（设计方案 §6.1 / §9：5 类 × 4 条 = 20 条）。label 为人工标注的期望意图。",
+  "labels": ["labor_law", "civil_code", "general", "greeting", "other"],
+  "samples": [
+    {
+      "id": "L01",
+      "query": "试用期最长可以约定多久？",
+      "label": "labor_law",
+      "note": "标准问法，应命中结构化话题「试用期」"
+    },
+    {
+      "id": "L02",
+      "query": "老板让我周末来加班，加班费到底按几倍给？",
+      "label": "labor_law",
+      "note": "口语化（老板/给），期望 hyde 改写"
+    },
+    {
+      "id": "L03",
+      "query": "公司经营困难把我裁了，经济补偿按工作年限怎么算，n+1 是什么意思？",
+      "label": "labor_law",
+      "note": "长句 + 计算 + 术语，期望 complex"
+    },
+    {
+      "id": "L04",
+      "query": "签了竞业限制协议，离职后公司一直不发补偿金，这个协议还有效吗",
+      "label": "labor_law",
+      "note": "无问号、多要素，检验不改问号也能判对"
+    },
+    {
+      "id": "C01",
+      "query": "离婚时婚前一方买的房子怎么分割？",
+      "label": "civil_code",
+      "note": "婚姻家庭编"
+    },
+    {
+      "id": "C02",
+      "query": "租房到期房东以墙面有污渍为由不退押金，我能起诉吗",
+      "label": "civil_code",
+      "note": "租赁合同；「押金」同时是劳动法关键词，检验 LLM 是否比规则更准"
+    },
+    {
+      "id": "C03",
+      "query": "朋友借钱写了借条但没写利息，到期后我能主张利息吗？",
+      "label": "civil_code",
+      "note": "借款合同"
+    },
+    {
+      "id": "C04",
+      "query": "父亲去世没留遗嘱，遗产应该按什么顺序由谁继承？",
+      "label": "civil_code",
+      "note": "继承编"
+    },
+    {
+      "id": "G01",
+      "query": "劳动合同里的违约金条款和民法典关于格式条款的规定，哪个优先适用？",
+      "label": "general",
+      "note": "跨劳动法 + 民法典"
+    },
+    {
+      "id": "G02",
+      "query": "同样是欺诈，劳动合同欺诈和房屋买卖欺诈的法律后果有什么区别？",
+      "label": "general",
+      "note": "跨法域对比"
+    },
+    {
+      "id": "G03",
+      "query": "打民事官司和行政诉讼在流程上有什么区别？",
+      "label": "general",
+      "note": "程序性泛法律问题（民事诉讼法 vs 行政诉讼法），不在三部法律范围内"
+    },
+    {
+      "id": "G04",
+      "query": "法律上的欺诈和刑法里的诈骗罪怎么区分？",
+      "label": "general",
+      "note": "民事 + 刑事，超出三部法律范围"
+    },
+    {
+      "id": "R01",
+      "query": "你好",
+      "label": "greeting",
+      "note": "最短问候"
+    },
+    {
+      "id": "R02",
+      "query": "在吗？",
+      "label": "greeting",
+      "note": "带标点问候"
+    },
+    {
+      "id": "R03",
+      "query": "早上好，谢谢你的帮助",
+      "label": "greeting",
+      "note": "问候 + 致谢"
+    },
+    {
+      "id": "R04",
+      "query": "hi，我又来了",
+      "label": "greeting",
+      "note": "中英混排，规则易误判为 general"
+    },
+    {
+      "id": "O01",
+      "query": "今天天气怎么样？",
+      "label": "other",
+      "note": "完全无关"
+    },
+    {
+      "id": "O02",
+      "query": "推荐几部好看的悬疑电影",
+      "label": "other",
+      "note": "娱乐请求"
+    },
+    {
+      "id": "O03",
+      "query": "帮我写一段 Python 快速排序代码",
+      "label": "other",
+      "note": "编程请求"
+    },
+    {
+      "id": "O04",
+      "query": "你能做什么？",
+      "label": "other",
+      "note": "能力询问（§6.1 归 other）"
+    }
+  ]
+}

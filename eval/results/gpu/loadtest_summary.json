@@ -1,0 +1,133 @@
+{
+  "generated_at": "2026-10-23T15:26:15+0800",
+  "levels": [
+    {
+      "concurrency": 1,
+      "requests": 30,
+      "planned_requests": 30,
+      "wall_seconds": 99.68,
+      "qps": 0.301,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
+      "ttft_ms": {
+        "mean": 1874.1,
+        "p50": 2116,
+        "p95": 2748,
+        "p99": 2956,
+        "max": 2956
+      },
+      "latency_ms": {
+        "mean": 3322.0,
+        "p50": 3694,
+        "p95": 6001,
+        "p99": 6028,
+        "max": 6028
+      },
+      "tokens_per_s_mean": 83.16,
+      "routes": {
+        "pure_structured": 6,
+        "hybrid": 12,
+        "pure_vector": 9,
+        "greeting": 3
+      },
+      "errors": []
+    },
+    {
+      "concurrency": 5,
+      "requests": 30,
+      "planned_requests": 30,
+      "wall_seconds": 22.0,
+      "qps": 1.364,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
+      "ttft_ms": {
+        "mean": 2090.8,
+        "p50": 2248,
+        "p95": 3258,
+        "p99": 3925,
+        "max": 3925
+      },
+      "latency_ms": {
+        "mean": 3405.3,
+        "p50": 3773,
+        "p95": 6141,
+        "p99": 6547,
+        "max": 6547
+      },
+      "tokens_per_s_mean": 74.16,
+      "routes": {
+        "pure_structured": 6,
+        "hybrid": 12,
+        "pure_vector": 9,
+        "greeting": 3
+      },
+      "errors": []
+    },
+    {
+      "concurrency": 10,
+      "requests": 30,
+      "planned_requests": 30,
+      "wall_seconds": 15.05,
+      "qps": 1.994,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
+      "ttft_ms": {
+        "mean": 2853.3,
+        "p50": 2946,
+        "p95": 4092,
+        "p99": 4652,
+        "max": 4652
+      },
+      "latency_ms": {
+        "mean": 4111.3,
+        "p50": 4471,
+        "p95": 7492,
+        "p99": 7575,
+        "max": 7575
+      },
+      "tokens_per_s_mean": 60.27,
+      "routes": {
+        "pure_structured": 6,
+        "hybrid": 12,
+        "pure_vector": 9,
+        "greeting": 3
+      },
+      "errors": []
+    },
+    {
+      "concurrency": 20,
+      "requests": 30,
+      "planned_requests": 30,
+      "wall_seconds": 11.17,
+      "qps": 2.686,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
+      "ttft_ms": {
+        "mean": 4375.3,
+        "p50": 4917,
+        "p95": 6724,
+        "p99": 7892,
+        "max": 7892
+      },
+      "latency_ms": {
+        "mean": 5571.6,
+        "p50": 6017,
+        "p95": 9609,
+        "p99": 10741,
+        "max": 10741
+      },
+      "tokens_per_s_mean": 39.29,
+      "routes": {
+        "pure_structured": 6,
+        "hybrid": 12,
+        "pure_vector": 9,
+        "greeting": 3
+      },
+      "errors": []
+    }
+  ]
+}

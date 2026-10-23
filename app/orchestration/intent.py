@@ -1,0 +1,275 @@
+"""意图识别 + Query 改写（单次 LLM 调用，JSON 模式）。
+
+数据流::
+
+    query + history
+      → LLM（qwen-max, JSON 模式, 3s 超时, 重试 1 次）
+      → _validate() 字段校正（非法值回落安全默认）
+      → IntentResult(source="llm")
+      —— 任一环节失败（缺 key/超时/网络/JSON 解析失败）——
+      → rule_based_intent() 规则兜底 → IntentResult(source="rules")
+
+兜底保证链路 100% 可用（设计方案 §6.1 量化目标：降级成功率 100%）。
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from functools import lru_cache
+from typing import Any, Sequence
+
+from app.core.logger import get_logger
+from app.generation.llm_client import LLMClient, LLMResponseError
+from app.orchestration.intent_rules import rule_based_intent
+from app.orchestration.models import (
+    ALL_LAWS,
+    COMPLEXITIES,
+    INTENT_LABELS,
+    REWRITE_TYPES,
+    STRUCTURED_TOPICS,
+    IntentResult,
+)
+from config import Settings, get_llm_api_key, get_settings
+
+logger = get_logger("lawanswer.intent")
+
+#: 一次 LLM 调用同时产出 6 类信息的 system prompt（设计方案 §6.1）
+INTENT_SYSTEM_PROMPT = """你是法律问答系统的「意图识别与查询改写」模块。根据用户问题（可附最近对话历史），一次性输出 JSON 对象。只输出 JSON，不要输出解释、不要用 Markdown 代码块。
+
+字段与取值：
+{
+  "intent": "labor_law | civil_code | general | greeting | other",
+  "rewrite_type": "direct | history | hyde | simplify | decompose",
+  "sub_queries": ["1-3 条检索用查询"],
+  "complexity": "simple | medium | complex",
+  "hit_structured": true,
+  "structured_topic": "试用期 | 加班费 | 经济补偿 | 竞业限制 | 劳务派遣 | 裁员 | 三期保护 | 工伤 | 社保 | 仲裁时效 | 合同订立 | 合同解除 | null",
+  "law_hints": ["中华人民共和国劳动合同法"],
+  "need_history": false
+}
+
+判定规则：
+- intent：劳动/劳动合同/工伤/仲裁等 → labor_law；民法典领域（合同、婚姻、继承、侵权、物权、借款、租赁、遗嘱）→ civil_code；跨两部以上或泛法律 → general；纯问候闲聊 → greeting；与法律无关 → other。注意"你能做什么/有哪些功能/你是谁"属能力与身份询问，归 other，不算 greeting。
+- rewrite_type：
+  - direct：问题完整、无指代、单跳；
+  - history：含"那/这个/具体/继续/还有呢"等指代，需结合历史补全实体；
+  - hyde：口语化且术语缺失（如"老板不给钱怎么办"），生成一段假设性法条表述用于检索；
+  - simplify：问题过长且混杂多意图，抽取主干；
+  - decompose：含"分别/以及/和…怎么算"且涉及多法条，拆成 2-3 个子查询。
+- sub_queries：把口语改写成法律术语表述，保留关键实体与数字；除 decompose 外通常 1 条；改写结果要能独立读懂。
+- complexity：单点短问 → simple；含条件/多要素 → medium；多问、跨条、含计算 → complex。
+- hit_structured：命中上述 12 个高频话题之一 → true，并给出 topic；否则 false 且 topic 为 null。
+- law_hints：从「中华人民共和国劳动合同法、中华人民共和国劳动法、中华人民共和国民法典」中选 1-3 部；greeting/other 输出 []。
+- need_history：是否需要结合对话历史才能理解 → true/false。"""
+
+
+def _format_history(history: Sequence[dict] | None, max_turns: int) -> str:
+    """把最近 N 轮对话压成文本行；无历史返回空串。"""
+    if not history or max_turns <= 0:
+        return ""
+    lines: list[str] = []
+    for msg in list(history)[-(max_turns * 2) :]:
+        role = msg.get("role", "user")
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        speaker = "用户" if role == "user" else "助手"
+        lines.append(f"{speaker}：{content[:200]}")
+    return "\n".join(lines)
+
+
+def _build_messages(query: str, history: Sequence[dict] | None, max_turns: int) -> list[dict]:
+    history_text = _format_history(history, max_turns)
+    user_parts: list[str] = []
+    if history_text:
+        user_parts.append(f"【最近对话】\n{history_text}")
+    user_parts.append(f"【用户问题】\n{query.strip()}")
+    return [
+        {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+        {"role": "user", "content": "\n\n".join(user_parts)},
+    ]
+
+
+def _strip_json_fences(text: str) -> str:
+    """容忍 ```json 包裹与前后杂讯：截取第一个 { 到最后一个 }。"""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json|JSON)?\s*", "", t)
+        t = re.sub(r"\s*```\s*$", "", t)
+    start, end = t.find("{"), t.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return t[start : end + 1]
+    return t
+
+
+def _coerce_sub_queries(value: Any, query: str) -> list[str]:
+    """LLM 可能给字符串/空列表/超长/重复——统一校正为 1-3 条非空去重查询。"""
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return [query] if query.strip() else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        q = item.strip()
+        if q and q not in seen:
+            seen.add(q)
+            out.append(q)
+        if len(out) >= 3:
+            break
+    return out or ([query] if query.strip() else [])
+
+
+def _validate(data: dict, query: str) -> IntentResult:
+    """把 LLM 原始 JSON 校正为合法的 :class:`IntentResult`。
+
+    非法字段不抛错，逐一回落到安全默认值——单字段抽风不应让整次识别失败。
+    """
+    intent = data.get("intent")
+    intent = intent if intent in INTENT_LABELS else "general"
+
+    rewrite_type = data.get("rewrite_type")
+    rewrite_type = rewrite_type if rewrite_type in REWRITE_TYPES else "direct"
+
+    complexity = data.get("complexity")
+    complexity = complexity if complexity in COMPLEXITIES else "medium"
+
+    sub_queries = _coerce_sub_queries(data.get("sub_queries"), query)
+
+    hit_structured = bool(data.get("hit_structured"))
+    topic = data.get("structured_topic")
+    if topic not in STRUCTURED_TOPICS:
+        topic = None
+        # topic 不在枚举内时不能声称命中
+        if hit_structured and data.get("structured_topic"):
+            logger.warning("LLM 返回未知 structured_topic=%r，按未命中处理", data.get("structured_topic"))
+
+    law_hints = [law for law in (data.get("law_hints") or []) if law in ALL_LAWS]
+    if intent in {"labor_law", "civil_code", "general"} and not law_hints:
+        # LLM 漏给 law_hints：按 intent 兜底，避免检索范围失控
+        from app.orchestration.intent_rules import rule_law_hints
+
+        law_hints = rule_law_hints(intent)
+
+    return IntentResult(
+        intent=intent,
+        rewrite_type=rewrite_type,
+        sub_queries=sub_queries,
+        complexity=complexity,
+        hit_structured=hit_structured,
+        structured_topic=topic,
+        law_hints=law_hints,
+        need_history=bool(data.get("need_history")),
+        source="llm",
+        raw=data,
+    )
+
+
+def _recognize_via_llm(
+    query: str,
+    *,
+    client: LLMClient,
+    history: Sequence[dict] | None,
+    max_turns: int,
+) -> IntentResult:
+    messages = _build_messages(query, history, max_turns)
+    resp = client.chat(messages, json_mode=True, temperature=0.1)
+    data = json.loads(_strip_json_fences(resp.content))
+    if not isinstance(data, dict):
+        raise LLMResponseError(f"LLM JSON 顶层不是对象: {type(data).__name__}")
+    return _validate(data, query)
+
+
+@lru_cache(maxsize=4)
+def _build_intent_client(
+    api_key: str,
+    base_url: str,
+    model: str,
+    timeout_s: float,
+    max_retries: int,
+    thinking: str,
+) -> LLMClient:
+    return LLMClient(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        timeout_s=timeout_s,
+        max_retries=max_retries,
+        thinking=thinking,
+    )
+
+
+def get_intent_client(settings: Settings | None = None) -> LLMClient:
+    """意图专用客户端：短超时 + 重试 1 次，快速失败走规则兜底。
+
+    ``thinking`` 必须与主链路一致下发：DeepSeek 的思考模式默认开启，若不显式
+    disabled，意图调用会跑到 3-10s（hidden reasoning 计入 completion_tokens），
+    既超时又让 temperature 失效。
+    """
+    s = settings or get_settings()
+    return _build_intent_client(
+        get_llm_api_key(),
+        s.llm_base_url,
+        s.llm_default_model,
+        float(s.intent_timeout_s),
+        s.intent_max_retries,
+        s.llm_thinking or "",
+    )
+
+
+def reset_intent_client() -> None:
+    _build_intent_client.cache_clear()
+
+
+def recognize_intent(
+    query: str,
+    *,
+    history: Sequence[dict] | None = None,
+    client: LLMClient | None = None,
+    settings: Settings | None = None,
+) -> IntentResult:
+    """意图识别入口：优先 LLM，任何失败都降级到规则兜底。
+
+    :param query: 用户当前问题
+    :param history: 最近对话，``[{"role": "user"|"assistant", "content": "..."}]``
+    :param client: 注入 LLM 客户端（测试用 mock）
+    """
+    query = (query or "").strip()
+    if not query:
+        return rule_based_intent(query, list(history) if history else None)
+
+    s = settings or get_settings()
+    started = time.perf_counter()
+    try:
+        llm = client or get_intent_client(s)
+        result = _recognize_via_llm(
+            query,
+            client=llm,
+            history=history,
+            max_turns=s.intent_history_turns,
+        )
+        elapsed = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "意图识别(LLM) q=%.40s intent=%s rewrite=%s complexity=%s topic=%s 耗时=%dms",
+            query,
+            result.intent,
+            result.rewrite_type,
+            result.complexity,
+            result.structured_topic,
+            elapsed,
+        )
+        return result
+    except Exception as exc:  # noqa: BLE001 - 兜底必须吞掉一切 LLM 异常
+        elapsed = int((time.perf_counter() - started) * 1000)
+        logger.warning(
+            "意图识别 LLM 失败（%s: %s），降级规则兜底；q=%.40s 耗时=%dms",
+            type(exc).__name__,
+            str(exc)[:120],
+            query,
+            elapsed,
+        )
+        return rule_based_intent(query, list(history) if history else None)

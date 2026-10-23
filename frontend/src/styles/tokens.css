@@ -1,0 +1,63 @@
+/* ---------------------------------------------------------------------------
+   设计 tokens（设计方案 §4.1）
+   基调：年轻、克制、专业感的"法务工具"；主色深靛蓝（信任/法律），
+   辅助薄荷绿（命中/成功），警示珊瑚。所有间距/圆角/动效集中在这里，
+   组件里只引用变量，改主题只改这个文件。
+--------------------------------------------------------------------------- */
+:root {
+  /* 主色 */
+  --c-primary: #2B4ACB;
+  --c-primary-hover: #2440B0;
+  --c-primary-soft: #EDF1FF;
+  --c-accent: #12B886;
+  --c-accent-soft: #E6F8F1;
+  --c-danger: #F76C5E;
+  --c-danger-soft: #FEEDEB;
+  --c-warn: #F0A020;
+  --c-warn-soft: #FEF6E7;
+
+  /* 中性色 */
+  --c-bg: #F7F8FB;
+  --c-card: #FFFFFF;
+  --c-text: #1C2333;
+  --c-muted: #6B7280;
+  --c-faint: #9AA3B2;
+  --c-border: #E8EBF2;
+  --c-border-strong: #D8DEEA;
+
+  /* 圆角 / 阴影 */
+  --r-card: 16px;
+  --r-btn: 10px;
+  --r-chip: 999px;
+  --r-input: 10px;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 24px rgba(16, 24, 40, .06);
+  --shadow-pop: 0 12px 32px rgba(16, 24, 40, .12);
+
+  /* 字体 */
+  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  --fs-title: 20px;
+  --fs-body: 14px;
+  --lh-body: 1.75;
+
+  /* 动效 */
+  --dur: 180ms;
+  --ease: cubic-bezier(.22, 1, .36, 1);
+
+  /* 布局 */
+  --w-nav: 240px;
+  --h-topbar: 56px;
+}
+
+/* Element Plus 主题对齐（按需组件继承主色，避免默认蓝紫混搭） */
+:root {
+  --el-color-primary: #2B4ACB;
+  --el-color-primary-light-3: #5C74D9;
+  --el-color-primary-light-5: #8D9EE6;
+  --el-color-primary-light-7: #BEC8F1;
+  --el-color-primary-light-8: #D6DCF6;
+  --el-color-primary-light-9: #EDF1FF;
+  --el-color-primary-dark-2: #2440B0;
+  --el-border-radius-base: 10px;
+  --el-font-family: var(--font-sans);
+}

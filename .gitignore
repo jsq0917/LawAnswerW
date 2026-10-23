@@ -1,0 +1,35 @@
+# ---------- 密钥与配置 ----------
+.env
+.env.*
+!.env.example
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---------- 运行时产物 ----------
+logs/
+data/uploads/
+volumes/
+models/
+*.log
+
+# ---------- 前端 ----------
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ---------- 编辑器 / 系统 ----------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---------- 本地记忆（保留 .workbuddy 目录本身，不纳入仓库） ----------
+.workbuddy/

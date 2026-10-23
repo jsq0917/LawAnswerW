@@ -1,0 +1,32 @@
+{
+  "concurrency": 10,
+  "requests": 30,
+  "planned_requests": 30,
+  "wall_seconds": 103.65,
+  "qps": 0.289,
+  "success": 30,
+  "failed": 0,
+  "error_rate": 0.0,
+  "ttft_ms": {
+    "mean": 26571.1,
+    "p50": 29080,
+    "p95": 54689,
+    "p99": 60420,
+    "max": 60420
+  },
+  "latency_ms": {
+    "mean": 28019.7,
+    "p50": 31350,
+    "p95": 58181,
+    "p99": 63857,
+    "max": 63857
+  },
+  "tokens_per_s_mean": 10.18,
+  "routes": {
+    "pure_structured": 7,
+    "hybrid": 11,
+    "pure_vector": 9,
+    "greeting": 3
+  },
+  "errors": []
+}

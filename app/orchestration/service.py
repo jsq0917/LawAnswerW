@@ -1,0 +1,133 @@
+"""编排入口：一次查询的完整决策（意图 → 路由 → 结构化判定）。
+
+数据流::
+
+    query
+      → recognize_intent()                     # LLM JSON 模式，失败降级规则
+      → route(intent, structured_hit=False)    # 静态路由（§6.3 矩阵）
+      → [仅结构化候选] qa_retriever.lookup()    # Redis → BM25 → 余弦门
+      → route(intent, structured_hit=命中?)    # 终裁：pure_structured / hybrid
+      → QueryPlan                              # 交给 Phase 5 生成链路
+
+设计约束（§6.3）：纯结构化问题**不产生 Milvus 调用**——路由层就不置
+``use_milvus``；纯法条问题**不查 qa_pairs**——``use_mysql_qa=False`` 时
+直接跳过结构化链路。
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+
+from app.core.logger import get_logger
+from app.orchestration.intent import recognize_intent
+from app.orchestration.models import IntentResult, RouteDecision
+from app.orchestration.qa_cache import QALookupResult, QARetriever, get_qa_retriever
+from app.orchestration.router import route
+from config import Settings, get_settings
+
+logger = get_logger("lawanswer.orchestration")
+
+
+@dataclass(frozen=True)
+class QueryPlan:
+    """一次查询的完整决策结果，生成链路（Phase 5）的唯一输入。"""
+
+    query: str
+    intent: IntentResult
+    route: RouteDecision
+    qa: QALookupResult
+    sub_queries: list[str] = field(default_factory=list)  # 实际用于检索的查询（改写后）
+    elapsed_ms: int = 0
+
+    @property
+    def degraded(self) -> bool:
+        """LLM 是否降级到规则兜底（SSE meta 的 degraded 标记用）。"""
+        return self.intent.source == "rules"
+
+    def to_dict(self) -> dict:
+        """调试/预览接口用（不依赖生成层类型）。"""
+        return {
+            "query": self.query,
+            "intent": self.intent.to_dict(),
+            "route": {
+                "route": self.route.route,
+                "kb_ids": list(self.route.kb_ids),
+                "use_mysql_qa": self.route.use_mysql_qa,
+                "use_milvus": self.route.use_milvus,
+                "reason": self.route.reason,
+            },
+            "qa": {
+                "hit": self.qa.hit.to_dict() if self.qa.hit else None,
+                "references": [r.to_dict() for r in self.qa.references],
+                "source": self.qa.source,
+                "similarity": self.qa.similarity,
+                "error": self.qa.error,
+            },
+            "sub_queries": list(self.sub_queries),
+            "degraded": self.degraded,
+            "elapsed_ms": self.elapsed_ms,
+        }
+
+
+def analyze_query(
+    query: str,
+    *,
+    history: list[dict] | None = None,
+    selected_kb_ids: list[str] | None = None,
+    qa_retriever: QARetriever | None = None,
+    settings: Settings | None = None,
+) -> QueryPlan:
+    """意图识别 + 路由 + 结构化判定，返回 :class:`QueryPlan`。
+
+    :param query: 用户当前问题
+    :param history: 最近对话 ``[{"role": ..., "content": ...}]``
+    :param selected_kb_ids: 前端勾选的知识库；空 = 全部勾选
+    :param qa_retriever: 注入问答检索器（测试用）
+    """
+    s = settings or get_settings()
+    query = (query or "").strip()
+    started = time.perf_counter()
+
+    # 1) 意图识别（LLM，失败自动降级规则）
+    intent_result = recognize_intent(query, history=history, settings=s)
+
+    # 2) 静态路由：先按"未精确命中"裁决，结构化候选再经问答库确认
+    pre_route = route(intent_result, selected_kb_ids=selected_kb_ids, structured_hit=False)
+
+    # 3) 结构化链路（仅路由要求时；纯法条/问候/无数据直接跳过，省一次 ngram 检索）
+    qa_result = QALookupResult()
+    final_route = pre_route
+    if pre_route.use_mysql_qa:
+        retriever = qa_retriever or get_qa_retriever()
+        qa_result = retriever.lookup(
+            query,
+            structured_topic=intent_result.structured_topic,
+            kb_ids=pre_route.kb_ids,
+        )
+        if qa_result.hit is not None:
+            # 精确命中 → 纯结构化：不碰 Milvus
+            final_route = route(intent_result, selected_kb_ids=selected_kb_ids, structured_hit=True)
+            logger.info("路由终裁：纯结构化（问答精确命中 id=%s）", qa_result.hit.id)
+
+    sub_queries = list(intent_result.sub_queries) or ([query] if query else [])
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "查询规划完成 q=%.40s intent=%s route=%s(%s→%s) 子查询=%d 条 degraded=%s 耗时=%dms",
+        query,
+        intent_result.intent,
+        final_route.route,
+        pre_route.route,
+        final_route.route,
+        len(sub_queries),
+        intent_result.source == "rules",
+        elapsed_ms,
+    )
+    return QueryPlan(
+        query=query,
+        intent=intent_result,
+        route=final_route,
+        qa=qa_result,
+        sub_queries=sub_queries,
+        elapsed_ms=elapsed_ms,
+    )
