@@ -81,6 +81,10 @@ COMPLEX_CONNECTORS: tuple[str, ...] = (
 #: 多问题特征（多个问号或"……？……？"）
 _MULTI_QUESTION_RE = re.compile(r"[?？].*[?？]")
 
+#: 子查询拆分分隔符：只按**显式**分隔符切（分号/句号/以及/并且/同时/还有）。
+#: 不能按"和"切——"和解协议"这类词会被误切，破坏检索语义。
+_SUBQUERY_SPLIT_RE = re.compile(r"[；;。]|以及|并且|同时|还有")
+
 # ---------------------------------------------------------------------------
 # 结构化话题 → 触发词（命中即 hit_structured）
 # ---------------------------------------------------------------------------
@@ -158,6 +162,31 @@ def rule_rewrite_type(query: str, history: list[dict] | None = None) -> str:
     return "direct"
 
 
+def rule_sub_queries(query: str) -> list[str]:
+    """规则兜底的多跳拆解：LLM 降级时尽量保住 decompose 能力。
+
+    按显式分隔符（；;。/以及/并且/同时/还有）和多个问号切 2-3 条子查询，
+    每条至少 4 个字符；切不出 ≥2 条有效子查询就退回原句单查询。
+    保守策略：宁可不拆，也不把"和解协议"这类词切碎。
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+    parts: list[str] = []
+    for seg in _SUBQUERY_SPLIT_RE.split(q):
+        parts.extend(x.strip() for x in re.split(r"[?？]", seg))
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        part = part.strip(" ，,、")
+        if len(part) >= 4 and part not in seen:
+            seen.add(part)
+            out.append(part)
+        if len(out) >= 3:
+            break
+    return out if len(out) >= 2 else ([q] if q else [])
+
+
 def rule_structured_topic(query: str) -> str | None:
     """命中结构化话题返回话题名，否则 None。长关键词优先匹配。"""
     text = normalize_query(query)
@@ -194,7 +223,7 @@ def rule_based_intent(query: str, history: list[dict] | None = None) -> IntentRe
     return IntentResult(
         intent=intent,
         rewrite_type=rewrite_type,
-        sub_queries=[query] if query else [],
+        sub_queries=rule_sub_queries(query) or ([query] if query else []),
         complexity=complexity if complexity in COMPLEXITIES else "medium",
         hit_structured=topic is not None,
         structured_topic=topic if topic in STRUCTURED_TOPICS else None,

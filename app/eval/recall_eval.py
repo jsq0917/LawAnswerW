@@ -1,19 +1,18 @@
 """检索召回与消融评估（设计方案 §7.3）。
 
-    uv run python -m app.eval.recall_eval                 # L1/L2/L3/L4 全跑（真实 Milvus + bge-m3）
-    uv run python -m app.eval.recall_eval --group L3      # 只跑一组
+    uv run python -m app.eval.recall_eval                 # 默认 L6/P6/P8（真实 Milvus + bge-m3）
+    uv run python -m app.eval.recall_eval --group P6      # 只跑一组
+    uv run python -m app.eval.recall_eval --all-groups    # 全部组
     uv run python -m app.eval.recall_eval --limit 5       # 调试
-
-四组配置（固定候选池 20）：
 
 | 组 | 配置 | 目的 |
 |---|---|---|
-| L1 | 仅稠密 + 不重排 | 基线，衡量稀疏信号的价值 |
-| L2 | 混合（dense + sparse + RRF） + 不重排 | 衡量 RRF 融合的价值 |
-| L3 | 混合 + bge-reranker-v2-m3 | 最终检索方案 |
-| L4 | 混合 + 重排 + 父块回填 | 衡量整条法条进上下文的价值（不改排序，故召回同 L3） |
+| L1–L4 | 阶段 7 首轮四组（固定候选池 20） | 单查询直检的基线与消融 |
+| L5–L7 | 加权 RRF / 法域过滤等改法复测 | 阶段 8 的假设验证 |
+| P6 | **生产真实链路**：真实意图 decompose 子查询 → retrieve_multi 并行分检 + 法条合并 | 评测口径 = 线上（AnswerEngine 同款） |
+| P8 | P6 + 稀疏候选减半（sparse_pool_ratio=0.5） | 消融"稀疏挤占候选名额"假设 |
 
-说明：§7.3 写"固定 topK=5"，但指标要求 Recall@8，故本轮统一按 topK=8 / pool=20 取候选，
+说明：§7.3 写"固定 topK=5"，但指标要求 Recall@8，故统一按 topK=8 取候选，
 Recall@1/3/5 由同一份结果截断得到，不影响组间可比性。
 
 产出 ``eval/results/recall.json``：每组 Recall@1/3/5/8、MRR、延迟分位、逐条明细。
@@ -54,13 +53,24 @@ GROUPS: dict[str, dict[str, Any]] = {
     "L5": {"mode": "hybrid", "use_rerank": True, "expand_parent": True, "ranker": "weighted",
            "law_filter": False, "label": "加权 RRF(0.75/0.25) + 重排 + 父块"},
     "L6": {"mode": "hybrid", "use_rerank": True, "expand_parent": True, "ranker": "weighted",
-           "law_filter": True, "label": "加权 RRF + 法域过滤 + 重排 + 父块（新最终方案）"},
+           "law_filter": True, "label": "加权 RRF + 法域过滤 + 重排 + 父块"},
     "L7": {"mode": "hybrid", "use_rerank": True, "expand_parent": True, "ranker": "rrf",
            "law_filter": True, "label": "等权 RRF + 法域过滤 + 重排 + 父块（ranker 对照）"},
+    # ---- P 组：走**生产真实链路**（REPORT §4.2 假设 C——多跳必须拆子查询分检）----
+    # 与 L 组的本质区别：先用真实意图识别拿到 decompose 子查询与复杂度，
+    # 再经 retrieve_multi 并行分检 + 按法条合并（= AnswerEngine._retrieve 同款）。
+    # L 组的单查询直检从此只是"单跳链路"的对照，不再代表线上行为。
+    "P6": {"pipeline": True, "mode": "hybrid", "use_rerank": True, "expand_parent": True,
+           "ranker": "rrf", "law_filter": True, "sparse_ratio": None,
+           "label": "生产链路：意图 decompose 子查询并行分检 + 法条合并（等权 RRF + 法域过滤）"},
+    "P8": {"pipeline": True, "mode": "hybrid", "use_rerank": True, "expand_parent": True,
+           "ranker": "rrf", "law_filter": True, "sparse_ratio": 0.5,
+           "label": "生产链路 + 稀疏候选减半（稠密不被挤占，消融稀疏名额假设）"},
 }
 
-DEFAULT_GROUPS = ("L5", "L6")
+DEFAULT_GROUPS = ("L6", "P6", "P8")
 HINTS_CACHE = ROOT / "eval" / "results" / "intent_hints.json"
+PIPELINE_CACHE = ROOT / "eval" / "results" / "intent_pipeline.json"
 
 
 class _CachingEmbedder:
@@ -109,6 +119,41 @@ def load_law_hints(cases: Sequence[dict[str, Any]], *, refresh: bool = False) ->
     return cached
 
 
+def load_pipeline_intents(
+    cases: Sequence[dict[str, Any]], *, refresh: bool = False
+) -> dict[str, dict[str, Any]]:
+    """P 组用：真实意图识别产出 sub_queries/complexity/law_hints，磁盘缓存。
+
+    与 load_law_hints 分开缓存：P 组需要的是完整意图产出（尤其 decompose
+    的子查询），这是"评测=线上"的关键——线上 AnswerEngine 用的就是这些子查询。
+    """
+    cached: dict[str, dict[str, Any]] = {}
+    if PIPELINE_CACHE.exists() and not refresh:
+        cached = json.loads(PIPELINE_CACHE.read_text(encoding="utf-8"))
+        if all(c["id"] in cached for c in cases):
+            print(f"复用意图 pipeline 缓存：{PIPELINE_CACHE.name}（--refresh-hints 可重算）")
+            return cached
+
+    from app.orchestration.intent import recognize_intent
+
+    print("调用意图识别生成子查询/复杂度/hints（40 次 LLM 调用）…")
+    for case in cases:
+        result = recognize_intent(case["question"])
+        cached[case["id"]] = {
+            "sub_queries": list(result.sub_queries),
+            "rewrite_type": result.rewrite_type,
+            "complexity": result.complexity,
+            "law_hints": list(result.law_hints),
+        }
+        print(
+            f"  {case['id']} {result.rewrite_type:<10} subs={len(result.sub_queries)} "
+            f"complexity={result.complexity}"
+        )
+    PIPELINE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    PIPELINE_CACHE.write_text(json.dumps(cached, ensure_ascii=False, indent=2), encoding="utf-8")
+    return cached
+
+
 def run_group(
     name: str,
     cases: Sequence[dict[str, Any]],
@@ -116,8 +161,13 @@ def run_group(
     reranker: Any,
     *,
     hints: dict[str, list[str]] | None = None,
+    pipeline_intents: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    from functools import partial
+
     from config import get_settings
+
+    from app.retrieval.service import retrieve, retrieve_multi
 
     cfg = GROUPS[name]
     base = get_settings()
@@ -125,6 +175,7 @@ def run_group(
         update={
             "retrieval_ranker": cfg["ranker"] or base.retrieval_ranker,
             "retrieval_law_filter": bool(cfg["law_filter"]),
+            "retrieval_sparse_pool_ratio": cfg.get("sparse_ratio") or base.retrieval_sparse_pool_ratio,
         }
     )
     rows: list[dict[str, Any]] = []
@@ -136,18 +187,40 @@ def run_group(
         expected_set = set(expected)
         law_hints = (hints or {}).get(case["id"]) or None if cfg["law_filter"] else None
         started = time.perf_counter()
-        result = retrieve(
-            case["question"],
-            kb_ids=case.get("kb_ids") or None,
-            topk=TOP_K,
-            mode=cfg["mode"],
-            use_rerank=cfg["use_rerank"],
-            expand_parent=cfg["expand_parent"],
-            law_hints=law_hints,
-            embedder=embedder,
-            reranker=reranker if cfg["use_rerank"] else None,
-            settings=settings,
-        )
+        if cfg.get("pipeline"):
+            # 生产真实链路：真实意图的 decompose 子查询 → retrieve_multi 并行分检
+            pipe = (pipeline_intents or {}).get(case["id"]) or {}
+            subs = pipe.get("sub_queries") or [case["question"]]
+            law_hints = pipe.get("law_hints") or None if cfg["law_filter"] else None
+            fn = partial(
+                retrieve,
+                embedder=embedder,
+                reranker=reranker if cfg["use_rerank"] else None,
+                expand_parent=cfg["expand_parent"],
+            )
+            result = retrieve_multi(
+                subs,
+                kb_ids=case.get("kb_ids") or None,
+                complexity=pipe.get("complexity") or "medium",
+                topk=TOP_K,
+                law_hints=law_hints,
+                anchor_query=case["question"],
+                settings=settings,
+                retrieve_fn=fn,
+            )
+        else:
+            result = retrieve(
+                case["question"],
+                kb_ids=case.get("kb_ids") or None,
+                topk=TOP_K,
+                mode=cfg["mode"],
+                use_rerank=cfg["use_rerank"],
+                expand_parent=cfg["expand_parent"],
+                law_hints=law_hints,
+                embedder=embedder,
+                reranker=reranker if cfg["use_rerank"] else None,
+                settings=settings,
+            )
         elapsed = (time.perf_counter() - started) * 1000
         latencies.append(elapsed)
         hits = result.hits
@@ -276,7 +349,10 @@ def main() -> None:
     print("=" * 78)
 
     hints = load_law_hints(cases, refresh=args.refresh_hints) if any(
-        GROUPS[n]["law_filter"] for n in names
+        GROUPS[n]["law_filter"] and not GROUPS[n].get("pipeline") for n in names
+    ) else None
+    pipeline_intents = load_pipeline_intents(cases, refresh=args.refresh_hints) if any(
+        GROUPS[n].get("pipeline") for n in names
     ) else None
 
     embedder = _CachingEmbedder(get_embedder())
@@ -290,7 +366,10 @@ def main() -> None:
     groups = []
     for name in names:
         print(f"\n[{name}] {GROUPS[name]['label']}")
-        groups.append(run_group(name, cases, embedder, reranker, hints=hints))
+        groups.append(
+            run_group(name, cases, embedder, reranker,
+                      hints=hints, pipeline_intents=pipeline_intents)
+        )
 
     total_s = round(time.perf_counter() - started, 1)
     print("\n" + "=" * 78)

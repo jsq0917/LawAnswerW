@@ -60,6 +60,9 @@ class BgeReranker:
         self._model = None
         # 加载锁：与 embedder 同理，防并发首请求双载模型
         self._load_lock = threading.Lock()
+        # 推理锁：共享模型不支持并发 compute_score（Windows 并发 GPU 前向
+        # 会因内存提交超限产出坏结果），GPU 本就串行执行 kernel
+        self._infer_lock = threading.Lock()
 
     def _resolve_device(self) -> str:
         device = (self.device or "cpu").lower()
@@ -98,12 +101,13 @@ class BgeReranker:
         model = self._load()
         pairs = [[query, doc[: self.max_text_chars]] for doc in documents]
         scores: list[float] = []
-        for start in range(0, len(pairs), self.batch_size):
-            batch = pairs[start : start + self.batch_size]
-            raw = model.compute_score(batch, normalize=True, max_length=self.max_length)
-            if isinstance(raw, (int, float)):
-                raw = [raw]
-            scores.extend(float(x) for x in raw)
+        with self._infer_lock:
+            for start in range(0, len(pairs), self.batch_size):
+                batch = pairs[start : start + self.batch_size]
+                raw = model.compute_score(batch, normalize=True, max_length=self.max_length)
+                if isinstance(raw, (int, float)):
+                    raw = [raw]
+                scores.extend(float(x) for x in raw)
         return scores
 
 

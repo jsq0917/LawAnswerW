@@ -88,6 +88,10 @@ class BgeM3Embedder:
         self._model = None
         # 加载锁：启动后前两个并发请求可能同时触发 _load，无锁会双载 2GB 权重
         self._load_lock = threading.Lock()
+        # 推理锁：共享模型实例不支持多线程并发 forward——实测并发 encode 在
+        # Windows 上会因内存提交超限（os error 1455）静默产出零向量，
+        # 让 Milvus 返回 0 候选。GPU 本就串行执行 kernel，加锁无吞吐损失。
+        self._infer_lock = threading.Lock()
 
     def _resolve_device(self) -> str:
         device = (self.device or "cpu").lower()
@@ -127,22 +131,23 @@ class BgeM3Embedder:
         if not texts:
             return []
         model = self._load()
-        output = model.encode(
-            list(texts),
-            batch_size=batch_size,
-            max_length=self.max_length,
-            return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=False,
-        )
-        dense_vecs = output["dense_vecs"]
-        lexical = output["lexical_weights"]
-        results: list[Embedding] = []
-        for dense, weights in zip(dense_vecs, lexical):
-            sparse = {
-                int(k): float(v) for k, v in weights.items() if float(v) >= SPARSE_MIN_WEIGHT
-            }
-            results.append(Embedding(dense=[float(x) for x in dense], sparse=sparse))
+        with self._infer_lock:
+            output = model.encode(
+                list(texts),
+                batch_size=batch_size,
+                max_length=self.max_length,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False,
+            )
+            dense_vecs = output["dense_vecs"]
+            lexical = output["lexical_weights"]
+            results: list[Embedding] = []
+            for dense, weights in zip(dense_vecs, lexical):
+                sparse = {
+                    int(k): float(v) for k, v in weights.items() if float(v) >= SPARSE_MIN_WEIGHT
+                }
+                results.append(Embedding(dense=[float(x) for x in dense], sparse=sparse))
         return results
 
 

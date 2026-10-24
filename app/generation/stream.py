@@ -272,6 +272,7 @@ class AnswerEngine:
                 kb_ids=list(plan.route.kb_ids) or None,
                 complexity=plan.intent.complexity,
                 law_hints=list(plan.intent.law_hints) or None,
+                anchor_query=plan.query,
                 settings=settings,
                 retrieve_fn=self._retrieve_fn or retrieve,
             )

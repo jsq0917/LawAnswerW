@@ -281,6 +281,9 @@ class Settings(BaseSettings):
     retrieval_sparse_weight: float = Field(default=0.25, ge=0.0, le=1.0)
     # 用意图层的 law_hints 做检索法域预过滤（false = 全库检索，用于消融对照）
     retrieval_law_filter: bool = True
+    # 稀疏路候选池比例：<1 时稀疏少取候选，避免挤占稠密正确条的候选名额
+    # （REPORT §4.4 证伪加权 RRF 后的真实怀疑点：名额之争而非权重之争）
+    retrieval_sparse_pool_ratio: float = Field(default=1.0, ge=0.1, le=1.0)
     qa_similarity_threshold: float = Field(default=0.90, ge=0.0, le=1.0)
     qa_bm25_topn: int = Field(default=3, ge=1, le=20)
     cache_qa_ttl: int = Field(default=604800, ge=60)

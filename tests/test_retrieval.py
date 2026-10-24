@@ -259,7 +259,12 @@ class TestRetrieveMulti:
     def _settings(self):
         from types import SimpleNamespace
 
-        return SimpleNamespace(retrieval=SimpleNamespace(topk_for=lambda c: {"simple": 3, "medium": 5, "complex": 8}[c]))
+        return SimpleNamespace(
+            retrieval=SimpleNamespace(
+                topk_for=lambda c: {"simple": 3, "medium": 5, "complex": 8}[c],
+                rrf_k=60,
+            )
+        )
 
     def test_merge_dedupes_by_parent_not_chunk(self):
         """同一法条（parent 相同）的不同子块从不同子查询召回，只保留最高分一条。"""
@@ -326,6 +331,45 @@ class TestRetrieveMulti:
 
         with pytest.raises(ValueError):
             retrieve_multi(["  "], complexity="simple", settings=self._settings(), retrieve_fn=lambda q, **kw: _FakeResult([]))
+
+
+    def test_anchor_query_joins_fusion(self):
+        """原句作为锚点投票人参与 RRF：子查询漏掉的条可被原句路补回。"""
+        from app.retrieval.service import retrieve_multi
+
+        seen: list[str] = []
+
+        def fn(q, **kw):
+            seen.append(q)
+            if q == "原句":
+                # 只有原句路召回 p9
+                return _FakeResult([_hit("c9", "p9", rerank=0.95)])
+            return _FakeResult([_hit("c1", "p1", rerank=0.9)])
+
+        res = retrieve_multi(
+            ["子问题A"], anchor_query="原句",
+            complexity="simple", settings=self._settings(), retrieve_fn=fn,
+        )
+        assert set(seen) == {"子问题A", "原句"}
+        assert {h.parent_id for h in res.hits} == {"p1", "p9"}
+
+    def test_rrf_merge_rank_based(self):
+        """RRF 按名次融合：两路各自的第 1 名并列在前，不受绝对分数量纲影响。"""
+        from app.retrieval.service import retrieve_multi
+
+        def fn(q, **kw):
+            if q == "q1":
+                # 分数量纲整体偏高的一路
+                return _FakeResult([_hit("a1", "pa", rerank=0.99), _hit("a2", "pb", rerank=0.98)])
+            # 分数整体偏低的一路：pb 是它的第 1 名
+            return _FakeResult([_hit("b1", "pb", rerank=0.11), _hit("b2", "pc", rerank=0.10)])
+
+        res = retrieve_multi(["q1", "q2"], complexity="simple",
+                             settings=self._settings(), retrieve_fn=fn)
+        parents = [h.parent_id for h in res.hits]
+        # pa/pb 都是各自路的第 1 名（RRF 并列），pc 两路第 2 → 前二必须是 {pa,pb}
+        assert set(parents[:2]) == {"pa", "pb"}
+        assert parents[2] == "pc"
 
     def test_rerank_prefers_parent_best_child(self):
         """retrieve() 重排前按 parent 预去重：同条多子块只送一条进 cross-encoder。"""

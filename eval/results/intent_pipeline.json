@@ -1,0 +1,412 @@
+{
+  "q01": {
+    "sub_queries": [
+      "试用期最长可以约定多长时间"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q02": {
+    "sub_queries": [
+      "试用期工资最低标准是多少"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q03": {
+    "sub_queries": [
+      "平时加班的加班费支付标准是几倍工资？",
+      "休息日加班的加班费支付标准是几倍工资？",
+      "法定节假日加班的加班费支付标准是几倍工资？"
+    ],
+    "rewrite_type": "decompose",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法",
+      "中华人民共和国劳动法"
+    ]
+  },
+  "q04": {
+    "sub_queries": [
+      "劳动者每日加班时间上限是多少小时"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q05": {
+    "sub_queries": [
+      "竞业限制期限最长不得超过几年"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q06": {
+    "sub_queries": [
+      "劳动者辞职需要提前多久通知用人单位"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q07": {
+    "sub_queries": [
+      "老板拖欠工资除了补发还能主张经济补偿金吗"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q08": {
+    "sub_queries": [
+      "公司未签订书面劳动合同，二倍工资如何计算"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q09": {
+    "sub_queries": [
+      "公司必须与劳动者签订无固定期限劳动合同的情形有哪些"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q10": {
+    "sub_queries": [
+      "公司不能辞退员工的法定情形有哪些，依据中华人民共和国劳动合同法"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q11": {
+    "sub_queries": [
+      "借款合同未约定利息是否可以主张利息"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q12": {
+    "sub_queries": [
+      "房屋租赁合同最长有效期是多少年"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q13": {
+    "sub_queries": [
+      "无遗嘱情况下房产和存款的法定继承顺序"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q14": {
+    "sub_queries": [
+      "普通民事纠纷的诉讼时效是几年"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q15": {
+    "sub_queries": [
+      "职工年休假天数如何确定",
+      "年假天数根据工作年限如何计算"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q16": {
+    "sub_queries": [
+      "试用期被以不符合录用条件辞退是否需要支付经济补偿"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q17": {
+    "sub_queries": [
+      "公司未提前30天通知解除劳动合同，除经济补偿外是否还需支付赔偿金"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q18": {
+    "sub_queries": [
+      "违法解除劳动合同的赔偿金如何计算？",
+      "经济补偿金中的N与双倍赔偿金2N的区别是什么？"
+    ],
+    "rewrite_type": "decompose",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q19": {
+    "sub_queries": [
+      "签订竞业限制协议后，离职公司未支付补偿金，员工是否仍需履行竞业限制义务"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q20": {
+    "sub_queries": [
+      "公司拖欠工资劳动者是否可以解除劳动合同并要求经济补偿"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q21": {
+    "sub_queries": [
+      "怀孕期间被辞退的法律后果及劳动者可主张的权利"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q22": {
+    "sub_queries": [
+      "劳动合同到期公司不续签是否需要支付经济补偿"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q23": {
+    "sub_queries": [
+      "劳务派遣员工被用工单位退回后，派遣公司能否直接解除劳动合同"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q24": {
+    "sub_queries": [
+      "公司实行996工作制且不支付加班费，劳动者是否可以解除劳动合同并要求经济补偿"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q25": {
+    "sub_queries": [
+      "口头约定试用期三个月但劳动合同未写明是否有效"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q26": {
+    "sub_queries": [
+      "房东不退还押金且更换门锁，承租人可主张哪些权利？",
+      "租赁合同中房东拒退押金并换锁是否构成违约？"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国民法典",
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q27": {
+    "sub_queries": [
+      "婚前一方购买房产 婚后共同还贷 离婚时房产如何分割"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q28": {
+    "sub_queries": [
+      "公司裁员时经济补偿金的计算标准是什么",
+      "试用期是否计入工作年限以计算经济补偿金"
+    ],
+    "rewrite_type": "decompose",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q29": {
+    "sub_queries": [
+      "工作3年7个月被违法辞退，月薪2万元，经济赔偿金额如何计算"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q30": {
+    "sub_queries": [
+      "试用期两个月，月薪8000，公司以不符合录用条件为由解除劳动合同，劳动者可获得哪些经济补偿？"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q31": {
+    "sub_queries": [
+      "公司拖欠工资且未缴纳社会保险，劳动者可同时主张哪些权利"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q32": {
+    "sub_queries": [
+      "离职后三年内不得从事同行业竞业限制条款的法律效力"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q33": {
+    "sub_queries": [
+      "公司按最低工资标准计算加班费是否合法"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "simple",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q34": {
+    "sub_queries": [
+      "民法典违约金过高调整规则是否适用于劳动合同违约金"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q35": {
+    "sub_queries": [
+      "员工工作期间受伤且公司未缴纳工伤保险，赔偿责任由谁承担"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q36": {
+    "sub_queries": [
+      "离婚时虚拟货币财产如何分割"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国民法典"
+    ]
+  },
+  "q37": {
+    "sub_queries": [
+      "公司安装监控软件查看员工电脑屏幕是否合法"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q38": {
+    "sub_queries": [
+      "外卖骑手因平台算法罚款是否可直接提起诉讼"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  },
+  "q39": {
+    "sub_queries": [
+      "网络主播偷逃税款的法律责任包括哪些"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法",
+      "中华人民共和国劳动法",
+      "中华人民共和国民法典"
+    ]
+  },
+  "q40": {
+    "sub_queries": [
+      "中国公司在境外雇佣当地员工是否适用中华人民共和国劳动合同法"
+    ],
+    "rewrite_type": "direct",
+    "complexity": "medium",
+    "law_hints": [
+      "中华人民共和国劳动合同法"
+    ]
+  }
+}

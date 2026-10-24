@@ -124,8 +124,20 @@ def to_hit(raw) -> Hit:
     )
 
 
-def build_requests(embedding: Embedding, *, pool: int, expr: str, mode: str):
-    """构造 Milvus 混合检索请求。mode=dense 时只发稠密一路（消融用）。"""
+def build_requests(
+    embedding: Embedding,
+    *,
+    pool: int,
+    expr: str,
+    mode: str,
+    sparse_pool_ratio: float = 1.0,
+):
+    """构造 Milvus 混合检索请求。mode=dense 时只发稠密一路（消融用）。
+
+    ``sparse_pool_ratio`` < 1 时稀疏路少取候选（如 0.5 → 稀疏取 pool/2）：
+    两路各取 pool 会让稀疏路挤占候选池名额，正确条连候选都进不了
+    （REPORT §4.4 证伪加权 RRF 后的真实怀疑点，供消融验证）。
+    """
     from pymilvus import AnnSearchRequest
 
     # 空稀疏向量会被 Milvus 拒绝；这类极短 query 降级为纯稠密
@@ -140,12 +152,13 @@ def build_requests(embedding: Embedding, *, pool: int, expr: str, mode: str):
         )
     ]
     if mode == "hybrid" and indices:
+        sparse_limit = pool if sparse_pool_ratio >= 1.0 else max(4, int(pool * sparse_pool_ratio))
         requests.append(
             AnnSearchRequest(
                 data=[dict(zip(indices, values))],
                 anns_field=SPARSE_FIELD,
                 param={"metric_type": "IP", "params": {"drop_ratio_search": SPARSE_DROP_RATIO}},
-                limit=pool,
+                limit=sparse_limit,
                 expr=expr or None,
             )
         )
@@ -165,19 +178,20 @@ def search(
     dense_weight: float = 0.75,
     sparse_weight: float = 0.25,
     law_hints: list[str] | None = None,
+    sparse_pool_ratio: float = 1.0,
 ) -> list[Hit]:
     """执行检索并融合。返回按融合分降序的候选（未重排）。
 
-    融合策略两种（``ranker``）：
-    - ``weighted``（默认）：Milvus ``WeightedRanker``，按归一化分数加权。
-      等权 RRF 在"两部法术语高度重叠"的语料上会把干净的稠密序打散，实测 Recall@5
-      比纯稠密低 12 个点，故改为稠密主导（0.75 / 0.25）。
-    - ``rrf``：等权 RRF（保留作对照，阶段 4 的原行为）。
+    融合策略由 ``ranker`` 决定（生产默认经 config 传 ``rrf`` 等权 RRF）：
+    - ``rrf``：等权 RRF。消融结论（REPORT §4.4）：加权无收益已回退等权。
+    - ``weighted``：Milvus ``WeightedRanker`` 按归一化分数加权（保留作对照）。
     """
     from pymilvus import RRFRanker, WeightedRanker
 
     expr = build_filter(kb_ids, law_hints)
-    requests = build_requests(embedding, pool=pool, expr=expr, mode=mode)
+    requests = build_requests(
+        embedding, pool=pool, expr=expr, mode=mode, sparse_pool_ratio=sparse_pool_ratio
+    )
     if len(requests) == 1:
         results = client.search(
             collection_name=collection,

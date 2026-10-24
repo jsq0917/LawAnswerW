@@ -171,6 +171,87 @@ def _load_answers() -> list[dict[str, Any]]:
     return rows
 
 
+def strip_disclaimer(answer: str) -> str:
+    """剥离固定免责尾注后再交给 RAGAS（faithfulness 不该给模板句扣分）。"""
+    from app.generation.prompts import DISCLAIMER_TAIL
+
+    text = (answer or "").strip()
+    tail = DISCLAIMER_TAIL.strip()
+    if text.endswith(tail):
+        text = text[: -len(tail)].rstrip()
+    return text
+
+
+#: 答案中的引用（《法名》第X条），条号支持中文数字与阿拉伯数字
+_CITATION_RE = None
+
+
+def _citation_re():
+    global _CITATION_RE
+    if _CITATION_RE is None:
+        import re
+
+        _CITATION_RE = re.compile(r"《([^《》]{2,30})》(第[一二三四五六七八九十百零\d]+条)")
+    return _CITATION_RE
+
+
+def _norm_law(law: str) -> str:
+    """法名归一化：答案里常用简写（"劳动合同法"），来源/期望用全称，比对前拉齐。"""
+    return (law or "").replace("中华人民共和国", "").strip()
+
+
+def citation_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """引用完整性自动校验（离线，无需 LLM）：
+
+    - expected_coverage：期望法条被答案引用的比例（REPORT §6 的"引用命中率"，
+      此前靠人工抽查，现在全量自动算）；
+    - sources_coverage：检索给出的来源被答案引用的比例（漏标条号的量化）；
+    - hallucinated：答案引用了既不在 sources 也不在 expected 里的法条（错引）。
+    """
+    per_row: list[dict[str, Any]] = []
+    expected_cov: list[float] = []
+    sources_cov: list[float] = []
+    hallucinated_rows = 0
+    for r in rows:
+        answer = strip_disclaimer(r.get("answer") or "")
+        cited = {(_norm_law(law), art) for law, art in _citation_re().findall(answer)}
+        sources = {
+            (_norm_law(s.get("law") or ""), s.get("article_no") or "")
+            for s in r.get("sources") or []
+            if s.get("law") and s.get("article_no")
+        }
+        expected = set()
+        for key in r.get("expected_articles") or []:
+            law, _, art = key.partition("#")
+            expected.add((_norm_law(law), art))
+        row = {
+            "id": r.get("id"),
+            "cited": sorted(f"{law}#{art}" for law, art in cited),
+            "expected_missing": sorted(f"{law}#{art}" for law, art in expected - cited),
+            "sources_uncited": sorted(f"{law}#{art}" for law, art in sources - cited),
+            "hallucinated": sorted(f"{law}#{art}" for law, art in cited - sources - expected),
+        }
+        if row["hallucinated"]:
+            hallucinated_rows += 1
+        if expected:
+            cov = len(cited & expected) / len(expected)
+            expected_cov.append(cov)
+            row["expected_coverage"] = round(cov, 4)
+        if sources:
+            cov = len(cited & sources) / len(sources)
+            sources_cov.append(cov)
+            row["sources_coverage"] = round(cov, 4)
+        per_row.append(row)
+    return {
+        "rows": len(rows),
+        "rows_with_expected": len(expected_cov),
+        "expected_coverage_mean": round(statistics.fmean(expected_cov), 4) if expected_cov else None,
+        "sources_coverage_mean": round(statistics.fmean(sources_cov), 4) if sources_cov else None,
+        "rows_with_hallucinated_citation": hallucinated_rows,
+        "per_row": per_row,
+    }
+
+
 def _build_llm_and_embeddings():
     """judge LLM 走 OpenAI 兼容接口；embedding 用本地 bge-m3。"""
     from langchain_core.embeddings import Embeddings
@@ -216,11 +297,15 @@ def score(limit: int = 0) -> None:
         rows = rows[:limit]
     rows = [r for r in rows if (r.get("answer") or "").strip() and r.get("contexts")]
     print(f"待打分样本 {len(rows)} 条")
+    # 口径修正：剥离固定免责尾注（模板句不是模型论断，不该计入 faithfulness）
+    stripped = sum(1 for r in rows if r["answer"].strip() != strip_disclaimer(r["answer"]).strip())
+    if stripped:
+        print(f"已剥离 {stripped} 条答案的固定免责尾注")
 
     samples = [
         {
             "user_input": r["question"],
-            "response": r["answer"],
+            "response": strip_disclaimer(r["answer"]),
             "retrieved_contexts": r["contexts"],
             "reference": r["reference"],
         }
@@ -301,6 +386,7 @@ def score(limit: int = 0) -> None:
         "elapsed_seconds": elapsed,
         "metrics": per_metric,
         "verdict": verdict,
+        "citations": citation_report(rows),
         "per_sample": per_sample,
         "failed_samples": [r for r in per_sample if any(v is not None and v < 0.5 for k, v in r.items() if k in wanted)][:10],
     }
@@ -311,18 +397,35 @@ def score(limit: int = 0) -> None:
     for name, info in verdict.items():
         flag = "OK " if info["passed"] else "MISS"
         print(f"  {flag} {name:<20} {info['score']}  （目标 ≥{info['target']}）")
+    cites = payload["citations"]
+    if cites.get("expected_coverage_mean") is not None:
+        print(
+            f"  引用完整性：期望条覆盖 {cites['expected_coverage_mean']:.2%} / "
+            f"来源条被引用 {cites['sources_coverage_mean']:.2%} / "
+            f"错引行数 {cites['rows_with_hallucinated_citation']}"
+        )
     print(f"\n耗时 {elapsed}s，结果 → {RAGAS_PATH}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="RAGAS 五项评估")
     parser.add_argument("--collect", action="store_true", help="只采集真实回答")
+    parser.add_argument("--citations", action="store_true",
+                        help="只跑引用完整性校验（离线，读已有 qa_answers.jsonl，不调 LLM）")
     parser.add_argument("--force", action="store_true", help="重采已有结果")
     parser.add_argument("--url", default="http://127.0.0.1:8101/api/chat/stream")
     parser.add_argument("--limit", type=int, default=0, help="只打分前 N 条（调试）")
     args = parser.parse_args()
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    if args.citations:
+        report = citation_report(_load_answers())
+        print(json.dumps({k: v for k, v in report.items() if k != "per_row"},
+                         ensure_ascii=False, indent=2))
+        bad = [r for r in report["per_row"] if r["expected_missing"] or r["hallucinated"]]
+        for r in bad[:10]:
+            print(f"  {r['id']} 漏引={r['expected_missing']} 错引={r['hallucinated']}")
+        return
     if args.collect:
         collect(args.url, force=args.force)
     else:

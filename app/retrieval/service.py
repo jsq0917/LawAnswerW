@@ -77,6 +77,7 @@ def retrieve(
         dense_weight=s.retrieval.dense_weight,
         sparse_weight=s.retrieval.sparse_weight,
         law_hints=hints,
+        sparse_pool_ratio=getattr(s, "retrieval_sparse_pool_ratio", 1.0),
     )
     dense_hits = len(candidates)
 
@@ -183,27 +184,36 @@ def retrieve_multi(
     complexity: str = "medium",
     topk: int | None = None,
     law_hints: list[str] | None = None,
+    anchor_query: str | None = None,
     settings: Settings | None = None,
     retrieve_fn=None,
     max_workers: int = 3,
 ) -> RetrievalResult:
-    """多子查询检索：**并行**分检 → 按法条（parent_id）合并去重 → 全局截断。
+    """多子查询检索：**并行**分检 → RRF 按名次融合 → 按法条去重 → 全局截断。
 
     生产链路（``AnswerEngine._retrieve``）与 ``recall_eval`` 共用本函数，
     保证"评测口径 = 线上链路"（REPORT §4.2 假设 C：多跳问题必须拆子查询分检）。
 
-    * 每个子查询取 ``MULTI_POOL_FACTOR × 最终topK`` 条，给全局合并留余量；
-    * 合并按 ``parent_id``（同一法条的不同子块只留综合分最高的一条），
-      不能按 chunk_id——那会让同一法条重复挤占最终 topK 和上下文；
-    * 跨子查询的 rerank_score 不可直接比较（各自对不同 query 打分），
-      取每条法条在所有子查询下的**最高分**作全局序（max 聚合）；
-    * 个别子查询失败不致命：只要有任一成功就继续（部分降级），全失败才抛异常。
+    * 每个子查询取 ``MULTI_POOL_FACTOR × 最终topK`` 条，给融合留余量；
+    * **跨子查询融合按名次交错取位（interleave），不能用 max 分数也不能用
+      平缓 RRF**：rerank 分数是对各自 query 打的、量纲不可比（max 聚合让
+      "分数偏高的子查询"垄断排序）；RRF(k=60) 曲线太平，多跳场景下每条
+      期望法条只在对应子查询里排第 1，跨法近义条却在所有投票人里都排 3-5
+      名、多票累计反而压过单票第 1。交错取位保证每个子查询的头部法条
+      必进最终列表（多跳召回的关键），锚点排最前（保住单跳 MRR）；
+    * ``anchor_query``（通常是用户原句）作为第一路投票人参与融合：
+      原句直检对单跳强、子查询对多跳强，交错融合两者取并集优势；
+    * 合并按 ``parent_id``（同一法条的不同子块只留一条），个别子查询失败
+      不致命：只要有任一成功就继续（部分降级），全失败才抛异常。
     """
     s = settings or get_settings()
     fn = retrieve_fn or retrieve
     final_topk = topk or s.retrieval.topk_for(complexity)
     per_topk = max(int(final_topk * MULTI_POOL_FACTOR), final_topk)
     subs = [q.strip() for q in sub_queries if q and q.strip()]
+    anchor = (anchor_query or "").strip()
+    if anchor and anchor not in subs:
+        subs = [anchor] + subs
     if not subs:
         raise ValueError("sub_queries 为空")
     started = time.perf_counter()
@@ -234,21 +244,35 @@ def retrieve_multi(
         if not results:
             raise errors[0]
 
-    merged: dict[str, Hit] = {}
+    # 名次交错融合 + 法条（parent）去重：第 r 轮每个投票人各取自己第 r 名，
+    # 锚点（results[0]）每轮先取。已入列的法条跳过，直到凑满 final_topk。
     reranked = False
+    ranked_lists: list[list[Hit]] = []
     for r in results:
         reranked = reranked or r.reranked
-        for hit in r.hits:
+        ranked_lists.append(sorted(r.hits, key=hybrid._rank_value, reverse=True))
+    best_hit: dict[str, Hit] = {}
+    ordered_keys: list[str] = []
+    for round_rank in range(max((len(rl) for rl in ranked_lists), default=0)):
+        for ranked in ranked_lists:
+            if round_rank >= len(ranked):
+                continue
+            hit = ranked[round_rank]
             key = hit.parent_id or hit.chunk_id
-            prev = merged.get(key)
-            if prev is None or hybrid._rank_value(hit) > hybrid._rank_value(prev):
-                merged[key] = hit
-    hits = sorted(merged.values(), key=hybrid._rank_value, reverse=True)[:final_topk]
+            prev = best_hit.get(key)
+            if prev is None:
+                best_hit[key] = hit
+                ordered_keys.append(key)
+            elif hybrid._rank_value(hit) > hybrid._rank_value(prev):
+                best_hit[key] = hit
+        if len(ordered_keys) >= final_topk:
+            break
+    hits = [best_hit[k] for k in ordered_keys[:final_topk]]
     elapsed = int((time.perf_counter() - started) * 1000)
     logger.info(
-        "多子查询检索完成：子查询 %d 条 × topK=%d → 法条去重 %d 条 → 截断 %d 条"
+        "多子查询检索完成：查询 %d 路 × topK=%d → 交错融合 %d 条法条 → 截断 %d 条"
         "（重排=%s，失败子查询 %d 条）耗时=%dms",
-        len(subs), per_topk, len(merged), len(hits), reranked, len(errors), elapsed,
+        len(subs), per_topk, len(ordered_keys), len(hits), reranked, len(errors), elapsed,
     )
     return RetrievalResult(
         hits=hits,
@@ -263,5 +287,6 @@ def retrieve_multi(
             "sub_queries": subs,
             "per_subquery_topk": per_topk,
             "failed_subqueries": len(errors),
+            "merge": "interleave",
         },
     )

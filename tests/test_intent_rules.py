@@ -164,3 +164,51 @@ class TestRuleBasedIntent:
         result = rule_based_intent("")
         assert result.intent == "general"
         assert result.sub_queries == []
+
+
+class TestRuleSubQueries:
+    """规则兜底多跳拆解：LLM 降级时保住 decompose 能力（REPORT §4.2 假设 C）。"""
+
+    def test_multiple_questions_split(self):
+        from app.orchestration.intent_rules import rule_sub_queries
+
+        subs = rule_sub_queries("996不给加班费能解除合同吗？要补偿吗？")
+        assert len(subs) == 2
+        assert "加班费" in subs[0] and "解除" in subs[0]
+        assert "补偿" in subs[1]
+
+    def test_explicit_connectors_split(self):
+        from app.orchestration.intent_rules import rule_sub_queries
+
+        subs = rule_sub_queries("经济补偿怎么算；仲裁时效是多久")
+        assert subs == ["经济补偿怎么算", "仲裁时效是多久"]
+
+    def test_single_question_not_split(self):
+        from app.orchestration.intent_rules import rule_sub_queries
+
+        assert rule_sub_queries("试用期最长可以约定多久？") == ["试用期最长可以约定多久？"]
+        assert rule_sub_queries("加班费怎么算") == ["加班费怎么算"]
+
+    def test_heci_word_not_split(self):
+        """含"和解"的词不能被切坏（不按"和"切分的回归测试）。"""
+        from app.orchestration.intent_rules import rule_sub_queries
+
+        assert rule_sub_queries("工伤后签的和解协议有效吗") == ["工伤后签的和解协议有效吗"]
+
+    def test_short_parts_dropped(self):
+        from app.orchestration.intent_rules import rule_sub_queries
+
+        # 切出的片段太短（<4字）不构成有效子查询，退回原句
+        assert rule_sub_queries("补偿以及996") == ["补偿以及996"]
+
+    def test_rule_based_intent_uses_split(self):
+        from app.orchestration.intent_rules import rule_based_intent
+
+        result = rule_based_intent("未签合同的二倍工资怎么算？仲裁时效多久？")
+        assert len(result.sub_queries) == 2
+
+    def test_empty_query(self):
+        from app.orchestration.intent_rules import rule_sub_queries
+
+        assert rule_sub_queries("") == []
+        assert rule_sub_queries("   ") == []
