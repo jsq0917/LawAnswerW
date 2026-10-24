@@ -324,3 +324,110 @@ class TestFastRulePrecheck:
         result = recognize_intent("你好")
         assert result.source == "fast_rules"
         assert result.intent == "greeting"
+
+
+class FakeIntentRedis:
+    """意图缓存测试用的最小 Redis 桩：get/set，可注入异常。"""
+
+    def __init__(self, exc: Exception | None = None) -> None:
+        self.store: dict[str, str] = {}
+        self.exc = exc
+
+    def get(self, key):
+        if self.exc:
+            raise self.exc
+        return self.store.get(key)
+
+    def set(self, key, value, ex=None):
+        if self.exc:
+            raise self.exc
+        self.store[key] = value
+
+
+class TestIntentCache:
+    """意图结果缓存：无历史重复问题第二次不再调 LLM；带历史不走缓存。"""
+
+    @pytest.fixture()
+    def wired(self, monkeypatch):
+        """把 get_intent_client 换成假 LLM、get_redis 换成桩，走生产路径（client=None）。"""
+        import app.orchestration.intent as intent_mod
+        from app.db import redis_client as redis_mod
+
+        fake_redis = FakeIntentRedis()
+        fake_llm = FakeClient(VALID_JSON)
+
+        def fake_get_intent_client(settings=None):
+            return fake_llm
+
+        monkeypatch.setattr(intent_mod, "get_intent_client", fake_get_intent_client)
+        # 两个缓存辅助函数内部都 from app.db.redis_client import get_redis，
+        # 打补丁到源模块属性即可生效
+        monkeypatch.setattr(redis_mod, "get_redis", lambda s=None: fake_redis)
+        return fake_redis, fake_llm
+
+    def test_second_call_hits_cache_and_skips_llm(self, wired):
+        fake_redis, fake_llm = wired
+        first = recognize_intent("加班费怎么算")
+        assert first.source == "llm"
+        assert len(fake_llm.calls) == 1
+        assert len(fake_redis.store) == 1
+
+        second = recognize_intent("加班费怎么算")
+        assert second.source == "intent_cache"
+        assert second.intent == first.intent
+        assert second.sub_queries == first.sub_queries
+        # LLM 没有被再次调用
+        assert len(fake_llm.calls) == 1
+
+    def test_normalized_variants_share_cache(self, wired):
+        """标点/停用词差异不影响命中（与 qa 精确缓存同一归一化口径）。"""
+        fake_redis, fake_llm = wired
+        recognize_intent("加班费怎么算")
+        recognize_intent("加班费，怎么算？")
+        assert len(fake_llm.calls) == 1
+
+    def test_history_bypasses_cache(self, wired):
+        fake_redis, fake_llm = wired
+        history = [{"role": "user", "content": "我上个月入职"}]
+        recognize_intent("那试用期多久", history=history)
+        recognize_intent("那试用期多久", history=history)
+        # 带历史：不读不写缓存，每次都调 LLM
+        assert len(fake_redis.store) == 0
+        assert len(fake_llm.calls) == 2
+
+    def test_rules_fallback_not_cached(self, wired, monkeypatch):
+        """LLM 失败降级 rules 的结果不缓存（兜底结果不该被复用）。"""
+        import app.orchestration.intent as intent_mod
+
+        fake_redis, _ = wired
+        monkeypatch.setattr(
+            intent_mod, "get_intent_client", lambda s=None: FakeClient(exc=TimeoutError("t"))
+        )
+        result = recognize_intent("工伤认定标准是什么")
+        assert result.source == "rules"
+        assert len(fake_redis.store) == 0
+
+    def test_redis_failure_fails_open(self, monkeypatch):
+        """Redis 挂了不阻断链路：读失败当未命中，写失败不影响返回。"""
+        import app.orchestration.intent as intent_mod
+        from app.db import redis_client as redis_mod
+
+        monkeypatch.setattr(redis_mod, "get_redis", lambda s=None: FakeIntentRedis(exc=ConnectionError("down")))
+        monkeypatch.setattr(intent_mod, "get_intent_client", lambda s=None: FakeClient(VALID_JSON))
+        result = recognize_intent("竞业限制补偿金标准")
+        assert result.source == "llm"
+
+    def test_cache_disabled_by_ttl_zero(self, wired, monkeypatch):
+        fake_redis, fake_llm = wired
+        monkeypatch.setattr(
+            "config.get_settings",
+            lambda: __import__("types").SimpleNamespace(intent_cache_ttl=0),
+        )
+        # settings 显式传入 ttl=0
+        from types import SimpleNamespace
+
+        s = SimpleNamespace(intent_cache_ttl=0, intent_history_turns=2)
+        recognize_intent("劳务派遣合同怎么签", settings=s)
+        recognize_intent("劳务派遣合同怎么签", settings=s)
+        assert len(fake_redis.store) == 0
+        assert len(fake_llm.calls) == 2

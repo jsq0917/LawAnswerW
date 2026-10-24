@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
@@ -85,6 +86,8 @@ class BgeM3Embedder:
         self.max_length = max_length
         self.dim = dim
         self._model = None
+        # 加载锁：启动后前两个并发请求可能同时触发 _load，无锁会双载 2GB 权重
+        self._load_lock = threading.Lock()
 
     def _resolve_device(self) -> str:
         device = (self.device or "cpu").lower()
@@ -107,15 +110,18 @@ class BgeM3Embedder:
     def _load(self):
         if self._model is not None:
             return self._model
-        from FlagEmbedding import BGEM3FlagModel
+        with self._load_lock:
+            if self._model is not None:  # 双检：等锁期间别的线程已加载完
+                return self._model
+            from FlagEmbedding import BGEM3FlagModel
 
-        device = self._resolve_device()
-        self._model = BGEM3FlagModel(
-            self.model_path,
-            use_fp16=self.fp16 and device.startswith("cuda"),
-            device=device,
-        )
-        return self._model
+            device = self._resolve_device()
+            self._model = BGEM3FlagModel(
+                self.model_path,
+                use_fp16=self.fp16 and device.startswith("cuda"),
+                device=device,
+            )
+            return self._model
 
     def encode(self, texts: Sequence[str], batch_size: int = 16) -> list[Embedding]:
         if not texts:
@@ -142,18 +148,21 @@ class BgeM3Embedder:
 
 #: 进程级单例：bge-m3 加载一次约 40 秒，绝不能每个请求都重建
 _EMBEDDER: Embedder | None = None
+_EMBEDDER_LOCK = threading.Lock()
 
 
 def get_embedder(settings: Settings | None = None) -> Embedder:
     global _EMBEDDER
     if _EMBEDDER is None:
-        s = settings or get_settings()
-        _EMBEDDER = BgeM3Embedder(
-            str(s.embedding_model_dir),
-            device=s.embedding_device,
-            fp16=s.embedding_fp16,
-            max_length=512,
-        )
+        with _EMBEDDER_LOCK:
+            if _EMBEDDER is None:
+                s = settings or get_settings()
+                _EMBEDDER = BgeM3Embedder(
+                    str(s.embedding_model_dir),
+                    device=s.embedding_device,
+                    fp16=s.embedding_fp16,
+                    max_length=512,
+                )
     return _EMBEDDER
 
 

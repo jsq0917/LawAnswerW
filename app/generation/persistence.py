@@ -118,8 +118,17 @@ def persist_exchange(
 
 
 def _next_seq(conn, session_id: str) -> int:
+    """会话内下一个 seq。
+
+    ``FOR UPDATE`` 锁住该会话的 seq 索引区间直到事务提交：同一会话并发
+    落库时串行取号，避免两条消息算出同一个 ``MAX(seq)+1`` 撞号。
+    （跨会话互不影响——session_id 上有 FK 索引，锁范围按会话隔离。）
+    """
     row = conn.execute(
-        text("SELECT COALESCE(MAX(seq), 0) FROM chat_messages WHERE session_id = :sid"),
+        text(
+            "SELECT COALESCE(MAX(seq), 0) FROM chat_messages "
+            "WHERE session_id = :sid FOR UPDATE"
+        ),
         {"sid": session_id},
     ).fetchone()
     return int(row[0]) + 1

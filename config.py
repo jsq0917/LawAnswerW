@@ -196,6 +196,10 @@ class Settings(BaseSettings):
     debug: bool = False
     server_host: str = "127.0.0.1"
     server_port: int = Field(default=8101, ge=1, le=65535)
+    #: anyio 默认线程池容量（默认 40）。每条 SSE 流的每帧都经
+    #: iterate_in_threadpool 抢一个线程，意图（最坏 ~10.5s）+ 生成（60s）长占线程，
+    #: 40 条并发流即耗尽线程池且殃及所有端点。
+    server_thread_tokens: int = Field(default=120, ge=10, le=1000)
     cors_origins: str = "http://localhost:5180,http://127.0.0.1:5180"
 
     # ---- 鉴权 ----
@@ -243,6 +247,12 @@ class Settings(BaseSettings):
     intent_timeout_s: int = Field(default=5, ge=1, le=30)
     intent_max_retries: int = Field(default=1, ge=0, le=3)
     intent_history_turns: int = Field(default=2, ge=0, le=10)
+    intent_cache_ttl: int = Field(
+        default=86400,
+        ge=0,
+        le=30 * 86400,
+        description="意图识别结果 Redis 缓存 TTL（秒）；0 关闭。只缓存无历史问题的 LLM 成功结果",
+    )
 
     # ---- Embedding / Rerank ----
     embedding_model_path: str = (

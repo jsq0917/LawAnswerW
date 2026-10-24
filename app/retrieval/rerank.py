@@ -13,6 +13,7 @@ CPU 上的成本：20 条候选约 2–4 秒。所以只在候选池上跑（≤
 
 from __future__ import annotations
 
+import threading
 from typing import Protocol, Sequence
 
 from app.core.logger import get_logger
@@ -57,6 +58,8 @@ class BgeReranker:
         #: 不裁剪的话，300 字的条文会把 CPU 上的耗时拉到 9 秒级。
         self.max_text_chars = max_text_chars
         self._model = None
+        # 加载锁：与 embedder 同理，防并发首请求双载模型
+        self._load_lock = threading.Lock()
 
     def _resolve_device(self) -> str:
         device = (self.device or "cpu").lower()
@@ -75,16 +78,19 @@ class BgeReranker:
     def _load(self):
         if self._model is not None:
             return self._model
-        from FlagEmbedding import FlagReranker
+        with self._load_lock:
+            if self._model is not None:  # 双检：等锁期间别的线程已加载完
+                return self._model
+            from FlagEmbedding import FlagReranker
 
-        device = self._resolve_device()
-        self._model = FlagReranker(
-            self.model_path,
-            use_fp16=self.fp16 and device.startswith("cuda"),
-            device=device,
-        )
-        logger.info("重排模型已加载：%s (device=%s)", self.model_path, device)
-        return self._model
+            device = self._resolve_device()
+            self._model = FlagReranker(
+                self.model_path,
+                use_fp16=self.fp16 and device.startswith("cuda"),
+                device=device,
+            )
+            logger.info("重排模型已加载：%s (device=%s)", self.model_path, device)
+            return self._model
 
     def score(self, query: str, documents: Sequence[str]) -> list[float]:
         if not documents:
@@ -103,21 +109,24 @@ class BgeReranker:
 
 #: 进程级单例：与 embedder 一样，加载代价高（约 45 秒）
 _RERANKER: Reranker | None = None
+_RERANKER_LOCK = threading.Lock()
 
 
 def get_reranker(settings: Settings | None = None) -> Reranker:
     global _RERANKER
     if _RERANKER is None:
-        s = settings or get_settings()
-        _RERANKER = BgeReranker(
-            str(s.reranker_model_dir),
-            device=s.embedding_device,
-            # GPU 上开 fp16：4060 级别显卡单次重排从秒级降到几十毫秒；CPU 上 fp16 反而更慢
-            fp16=s.embedding_fp16,
-            batch_size=s.reranker_batch_size,
-            max_length=s.reranker_max_length,
-            max_text_chars=s.reranker_max_text_chars,
-        )
+        with _RERANKER_LOCK:
+            if _RERANKER is None:
+                s = settings or get_settings()
+                _RERANKER = BgeReranker(
+                    str(s.reranker_model_dir),
+                    device=s.embedding_device,
+                    # GPU 上开 fp16：4060 级别显卡单次重排从秒级降到几十毫秒；CPU 上 fp16 反而更慢
+                    fp16=s.embedding_fp16,
+                    batch_size=s.reranker_batch_size,
+                    max_length=s.reranker_max_length,
+                    max_text_chars=s.reranker_max_text_chars,
+                )
     return _RERANKER
 
 

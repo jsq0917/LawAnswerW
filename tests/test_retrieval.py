@@ -234,3 +234,110 @@ class TestMetrics:
     def test_mrr(self):
         assert mrr(self._hits(["第一条", "第二条"]), {"L#第二条"}) == 0.5
         assert mrr(self._hits(["第九条"]), {"L#第二条"}) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# retrieve_multi：并行分检 + 按法条合并去重（生产与 recall_eval 共用）
+# ---------------------------------------------------------------------------
+
+class _FakeResult:
+    def __init__(self, hits, reranked=True):
+        self.hits = hits
+        self.reranked = reranked
+
+
+def _hit(chunk_id, parent, score=0.5, rerank=None, article="第一条"):
+    return Hit(
+        chunk_id=chunk_id, parent_id=parent, kb_id="kb_labor", doc_id="D",
+        content="内容", title="标题", article_no=article, chapter_path="第一章",
+        law_name="中华人民共和国劳动合同法", source_file="a.md",
+        score=score, rerank_score=rerank,
+    )
+
+
+class TestRetrieveMulti:
+    def _settings(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(retrieval=SimpleNamespace(topk_for=lambda c: {"simple": 3, "medium": 5, "complex": 8}[c]))
+
+    def test_merge_dedupes_by_parent_not_chunk(self):
+        """同一法条（parent 相同）的不同子块从不同子查询召回，只保留最高分一条。"""
+        from app.retrieval.service import retrieve_multi
+
+        def fn(q, **kw):
+            if "加班" in q:
+                return _FakeResult([_hit("c1", "p1", rerank=0.9), _hit("c2", "p2", rerank=0.5)])
+            return _FakeResult([_hit("c3", "p1", rerank=0.7), _hit("c4", "p3", rerank=0.4)])
+
+        res = retrieve_multi(
+            ["加班费怎么算", "工时有什么限制"],
+            complexity="simple",  # topK=3
+            settings=self._settings(), retrieve_fn=fn,
+        )
+        parents = [h.parent_id for h in res.hits]
+        assert parents == ["p1", "p2", "p3"]
+        # p1 保留的是两个子查询里分数更高的 c1
+        assert res.hits[0].chunk_id == "c1"
+
+    def test_truncates_to_final_topk(self):
+        from app.retrieval.service import retrieve_multi
+
+        def fn(q, **kw):
+            return _FakeResult([_hit(f"c{i}", f"p{i}", rerank=1 - i * 0.1) for i in range(5)])
+
+        res = retrieve_multi(["q1", "q2"], complexity="simple", settings=self._settings(), retrieve_fn=fn)
+        assert len(res.hits) == 3  # simple → topK=3
+
+    def test_single_subquery_no_thread_pool(self):
+        from app.retrieval.service import retrieve_multi
+
+        def fn(q, **kw):
+            assert q == "唯一子查询"
+            return _FakeResult([_hit("c1", "p1", rerank=1.0)])
+
+        res = retrieve_multi(["唯一子查询"], complexity="medium", settings=self._settings(), retrieve_fn=fn)
+        assert len(res.hits) == 1
+        assert res.mode == "multi"
+
+    def test_partial_failure_keeps_rest(self):
+        """一个子查询抛异常不拖垮整体；全部失败才抛。"""
+        from app.retrieval.service import retrieve_multi
+
+        def fn(q, **kw):
+            if "坏" in q:
+                raise RuntimeError("milvus down")
+            return _FakeResult([_hit("c1", "p1", rerank=0.8)])
+
+        res = retrieve_multi(["坏问题", "好问题"], complexity="simple",
+                             settings=self._settings(), retrieve_fn=fn)
+        assert [h.chunk_id for h in res.hits] == ["c1"]
+        assert res.debug["failed_subqueries"] == 1
+
+        def fn_all_bad(q, **kw):
+            raise RuntimeError("milvus down")
+
+        with pytest.raises(RuntimeError):
+            retrieve_multi(["q1", "q2"], complexity="simple",
+                           settings=self._settings(), retrieve_fn=fn_all_bad)
+
+    def test_empty_subqueries_raises(self):
+        from app.retrieval.service import retrieve_multi
+
+        with pytest.raises(ValueError):
+            retrieve_multi(["  "], complexity="simple", settings=self._settings(), retrieve_fn=lambda q, **kw: _FakeResult([]))
+
+    def test_rerank_prefers_parent_best_child(self):
+        """retrieve() 重排前按 parent 预去重：同条多子块只送一条进 cross-encoder。"""
+        rows = [
+            _entity("c1", "p1", "同条子块1"),
+            _entity("c2", "p1", "同条子块2"),
+            _entity("c3", "p2", "另一条"),
+        ]
+        reranker = DummyReranker()
+        res = retrieve(
+            "某问题", complexity="simple",
+            embedder=DummyEmbedder(), reranker=reranker, client=FakeMilvus(rows),
+            expand_parent=False,
+        )
+        assert len({h.parent_id for h in res.hits}) == len(res.hits)

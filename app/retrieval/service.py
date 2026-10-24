@@ -16,6 +16,8 @@ mode=dense 用于消融实验（L1 组：仅稠密）。
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from typing import Sequence
 
 from sqlalchemy import bindparam, text
 
@@ -27,6 +29,9 @@ from app.retrieval.rerank import Reranker, get_reranker
 from config import Settings, get_settings
 
 logger = get_logger("lawanswer.retrieval")
+
+#: 多子查询检索时每个子查询的 topK 放大系数（合并去重后截断回最终 topK）
+MULTI_POOL_FACTOR = 1.5
 
 
 def retrieve(
@@ -77,6 +82,10 @@ def retrieve(
 
     reranked = False
     if use_rerank and candidates:
+        # 重排前按法条（parent）预去重：同条多子块重复送 cross-encoder 既浪费算力，
+        # 半句子块也容易误导打分。每条只保留融合分最高的子块。
+        if len(candidates) > 1:
+            candidates = hybrid.dedupe_by_parent(candidates, topk=len(candidates))
         reranker = reranker or get_reranker(s)
         scores = reranker.score(question, [c.embed_text for c in candidates])
         for hit, score in zip(candidates, scores):
@@ -165,3 +174,94 @@ def mrr(hits: list[Hit], expected: set[str]) -> float:
         if hit.law_article in expected:
             return 1.0 / rank
     return 0.0
+
+
+def retrieve_multi(
+    sub_queries: Sequence[str],
+    *,
+    kb_ids: list[str] | None = None,
+    complexity: str = "medium",
+    topk: int | None = None,
+    law_hints: list[str] | None = None,
+    settings: Settings | None = None,
+    retrieve_fn=None,
+    max_workers: int = 3,
+) -> RetrievalResult:
+    """多子查询检索：**并行**分检 → 按法条（parent_id）合并去重 → 全局截断。
+
+    生产链路（``AnswerEngine._retrieve``）与 ``recall_eval`` 共用本函数，
+    保证"评测口径 = 线上链路"（REPORT §4.2 假设 C：多跳问题必须拆子查询分检）。
+
+    * 每个子查询取 ``MULTI_POOL_FACTOR × 最终topK`` 条，给全局合并留余量；
+    * 合并按 ``parent_id``（同一法条的不同子块只留综合分最高的一条），
+      不能按 chunk_id——那会让同一法条重复挤占最终 topK 和上下文；
+    * 跨子查询的 rerank_score 不可直接比较（各自对不同 query 打分），
+      取每条法条在所有子查询下的**最高分**作全局序（max 聚合）；
+    * 个别子查询失败不致命：只要有任一成功就继续（部分降级），全失败才抛异常。
+    """
+    s = settings or get_settings()
+    fn = retrieve_fn or retrieve
+    final_topk = topk or s.retrieval.topk_for(complexity)
+    per_topk = max(int(final_topk * MULTI_POOL_FACTOR), final_topk)
+    subs = [q.strip() for q in sub_queries if q and q.strip()]
+    if not subs:
+        raise ValueError("sub_queries 为空")
+    started = time.perf_counter()
+
+    def _one(q: str):
+        return fn(
+            q,
+            kb_ids=kb_ids,
+            complexity=complexity,
+            topk=per_topk,
+            law_hints=law_hints,
+            settings=s,
+        )
+
+    errors: list[Exception] = []
+    results: list = []
+    if len(subs) == 1:
+        results.append(_one(subs[0]))
+    else:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(subs))) as ex:
+            futures = [(q, ex.submit(_one, q)) for q in subs]
+            for q, fut in futures:
+                try:
+                    results.append(fut.result())
+                except Exception as exc:  # noqa: BLE001 - 部分子查询失败不拖垮整体
+                    errors.append(exc)
+                    logger.warning("子查询检索失败（部分降级）q=%.40s：%s", q, str(exc)[:120])
+        if not results:
+            raise errors[0]
+
+    merged: dict[str, Hit] = {}
+    reranked = False
+    for r in results:
+        reranked = reranked or r.reranked
+        for hit in r.hits:
+            key = hit.parent_id or hit.chunk_id
+            prev = merged.get(key)
+            if prev is None or hybrid._rank_value(hit) > hybrid._rank_value(prev):
+                merged[key] = hit
+    hits = sorted(merged.values(), key=hybrid._rank_value, reverse=True)[:final_topk]
+    elapsed = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "多子查询检索完成：子查询 %d 条 × topK=%d → 法条去重 %d 条 → 截断 %d 条"
+        "（重排=%s，失败子查询 %d 条）耗时=%dms",
+        len(subs), per_topk, len(merged), len(hits), reranked, len(errors), elapsed,
+    )
+    return RetrievalResult(
+        hits=hits,
+        question="｜".join(subs),
+        topk=final_topk,
+        pool=per_topk,
+        complexity=complexity,
+        mode="multi",
+        reranked=reranked,
+        elapsed_ms=elapsed,
+        debug={
+            "sub_queries": subs,
+            "per_subquery_topk": per_topk,
+            "failed_subqueries": len(errors),
+        },
+    )

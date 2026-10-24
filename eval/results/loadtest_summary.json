@@ -1,282 +1,131 @@
 {
-  "generated_at": "2026-10-23T20:21:27+0800",
+  "generated_at": "2026-10-24T10:59:51+0800",
   "levels": [
     {
       "concurrency": 1,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 79.18,
-      "qps": 0.152,
-      "success": 12,
-      "failed": 18,
-      "error_rate": 0.6,
+      "wall_seconds": 83.92,
+      "qps": 0.357,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 2189.2,
-        "p50": 2414,
-        "p95": 3382,
-        "p99": 3778,
-        "max": 3778
+        "mean": 1903.5,
+        "p50": 2145,
+        "p95": 3172,
+        "p99": 3687,
+        "max": 3687
       },
       "latency_ms": {
-        "mean": 2638.8,
-        "p50": 2048,
-        "p95": 6050,
-        "p99": 10236,
-        "max": 10236
+        "mean": 2796.7,
+        "p50": 2919,
+        "p95": 5736,
+        "p99": 5755,
+        "max": 5755
       },
-      "tokens_per_s_mean": 53.88,
+      "tokens_per_s_mean": 43.58,
       "routes": {
-        "pure_structured": 2,
-        "hybrid": 6,
-        "pure_vector": 3,
-        "greeting": 1
+        "pure_structured": 6,
+        "hybrid": 21,
+        "greeting": 3
       },
-      "errors": [
-        {
-          "code": "ReadError",
-          "message": ""
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        }
-      ]
+      "errors": []
     },
     {
       "concurrency": 5,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 12.27,
-      "qps": 0.0,
-      "success": 0,
-      "failed": 30,
-      "error_rate": 1.0,
+      "wall_seconds": 17.42,
+      "qps": 1.722,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 0.0,
-        "p50": 0.0,
-        "p95": 0.0,
-        "p99": 0.0,
-        "max": 0.0
+        "mean": 1870.6,
+        "p50": 2173,
+        "p95": 3130,
+        "p99": 4010,
+        "max": 4010
       },
       "latency_ms": {
-        "mean": 2043.2,
-        "p50": 2043,
-        "p95": 2049,
-        "p99": 2049,
-        "max": 2049
+        "mean": 2741.0,
+        "p50": 2821,
+        "p95": 5955,
+        "p99": 6343,
+        "max": 6343
       },
-      "tokens_per_s_mean": 0.0,
-      "routes": {},
-      "errors": [
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        }
-      ]
+      "tokens_per_s_mean": 46.93,
+      "routes": {
+        "pure_structured": 8,
+        "hybrid": 19,
+        "greeting": 3
+      },
+      "errors": []
     },
     {
       "concurrency": 10,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 6.12,
-      "qps": 0.0,
-      "success": 0,
-      "failed": 30,
-      "error_rate": 1.0,
+      "wall_seconds": 13.8,
+      "qps": 2.174,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 0.0,
-        "p50": 0.0,
-        "p95": 0.0,
-        "p99": 0.0,
-        "max": 0.0
+        "mean": 2787.5,
+        "p50": 3016,
+        "p95": 4599,
+        "p99": 5012,
+        "max": 5012
       },
       "latency_ms": {
-        "mean": 2037.9,
-        "p50": 2036,
-        "p95": 2044,
-        "p99": 2044,
-        "max": 2044
+        "mean": 3657.5,
+        "p50": 3941,
+        "p95": 7061,
+        "p99": 7616,
+        "max": 7616
       },
-      "tokens_per_s_mean": 0.0,
-      "routes": {},
-      "errors": [
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        }
-      ]
+      "tokens_per_s_mean": 32.16,
+      "routes": {
+        "pure_structured": 5,
+        "hybrid": 21,
+        "pure_vector": 1,
+        "no_data": 1,
+        "greeting": 2
+      },
+      "errors": []
     },
     {
       "concurrency": 20,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 4.1,
-      "qps": 0.0,
-      "success": 0,
-      "failed": 30,
-      "error_rate": 1.0,
+      "wall_seconds": 12.01,
+      "qps": 2.498,
+      "success": 30,
+      "failed": 0,
+      "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 0.0,
-        "p50": 0.0,
-        "p95": 0.0,
-        "p99": 0.0,
-        "max": 0.0
+        "mean": 4963.8,
+        "p50": 5405,
+        "p95": 9177,
+        "p99": 9477,
+        "max": 9477
       },
       "latency_ms": {
-        "mean": 2046.7,
-        "p50": 2046,
-        "p95": 2050,
-        "p99": 2050,
-        "max": 2050
+        "mean": 5886.0,
+        "p50": 6935,
+        "p95": 10866,
+        "p99": 12008,
+        "max": 12008
       },
-      "tokens_per_s_mean": 0.0,
-      "routes": {},
-      "errors": [
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        },
-        {
-          "code": "ConnectError",
-          "message": "All connection attempts failed"
-        }
-      ]
+      "tokens_per_s_mean": 24.5,
+      "routes": {
+        "pure_structured": 7,
+        "hybrid": 20,
+        "greeting": 3
+      },
+      "errors": []
     }
   ]
 }

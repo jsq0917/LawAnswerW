@@ -79,6 +79,12 @@ async def lifespan(app: FastAPI):
         max_bytes=settings.log_max_bytes,
         backup_count=settings.log_backup_count,
     )
+    # 调大 anyio 线程池容量：SSE 每帧经 iterate_in_threadpool 抢线程，
+    # 默认 40 在并发 20+ 时会被长占的意图/生成调用耗尽，殃及所有端点。
+    import anyio.to_thread
+
+    anyio.to_thread.current_default_thread_limiter().total_tokens = settings.server_thread_tokens
+    logger.info("线程池容量：%d（anyio to_thread）", settings.server_thread_tokens)
     logger.info(
         "启动 %s v%s (env=%s, python=%s)",
         settings.app_name,

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -225,6 +226,52 @@ def reset_intent_client() -> None:
     _build_intent_client.cache_clear()
 
 
+# ---------------------------------------------------------------------------
+# 意图结果缓存：同一问题（无历史）重复提问时跳过 ~1s 的 LLM 调用
+# ---------------------------------------------------------------------------
+
+def _intent_cache_key(query: str) -> str:
+    """归一化后取 SHA1，与 qa 精确缓存同一套归一化口径（去标点/停用词）。"""
+    from app.orchestration.qa_cache import normalize_question
+
+    norm = normalize_question(query)
+    return "intent:" + hashlib.sha1(norm.encode("utf-8")).hexdigest()
+
+
+def _intent_cache_get(query: str, s: Settings) -> IntentResult | None:
+    """读意图缓存；Redis 故障/解析失败一律返回 None（fail-open，不影响链路）。"""
+    try:
+        from app.db.redis_client import get_redis
+
+        raw = get_redis(s).get(_intent_cache_key(query))
+    except Exception:  # noqa: BLE001 - 缓存不可用就当没命中
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        result = IntentResult(**data)
+        # 命中缓存也要能区分"真调了 LLM"还是"复用结果"
+        object.__setattr__(result, "source", "intent_cache")
+        return result
+    except Exception:  # noqa: BLE001 - 脏数据当未命中
+        return None
+
+
+def _intent_cache_put(query: str, result: IntentResult, s: Settings) -> None:
+    """只缓存 LLM 成功结果（source=llm）；规则兜底/降级结果不缓存。"""
+    try:
+        from app.db.redis_client import get_redis
+
+        get_redis(s).set(
+            _intent_cache_key(query),
+            json.dumps(result.to_dict(), ensure_ascii=False),
+            ex=s.intent_cache_ttl,
+        )
+    except Exception:  # noqa: BLE001 - 写失败不影响主链路
+        pass
+
+
 #: 纯问候语模式：整句只由问候词 + 语气词/标点构成才算 greeting。
 #: 必须整句匹配，不能 startswith 前缀匹配——"请问试用期被辞退有补偿吗"这类
 #: "礼貌前缀 + 真问题"会被误杀成固定话术（test_qa_cache / test_intent_rules
@@ -291,6 +338,18 @@ def recognize_intent(
             return pre
 
     s = settings or get_settings()
+    # 0.5) 意图结果缓存：无历史的重复问题直接复用上次 LLM 结果，省 ~1s。
+    #      带历史的问题意图依赖上下文，不缓存也不读缓存（key 只有 query）。
+    use_cache = client is None and not history and s.intent_cache_ttl > 0
+    if use_cache:
+        cached = _intent_cache_get(query, s)
+        if cached is not None:
+            logger.info(
+                "意图识别(缓存) q=%.40s intent=%s complexity=%s 命中 intent 缓存",
+                query, cached.intent, cached.complexity,
+            )
+            return cached
+
     started = time.perf_counter()
     try:
         llm = client or get_intent_client(s)
@@ -310,6 +369,8 @@ def recognize_intent(
             result.structured_topic,
             elapsed,
         )
+        if use_cache:
+            _intent_cache_put(query, result, s)
         return result
     except Exception as exc:  # noqa: BLE001 - 兜底必须吞掉一切 LLM 异常
         elapsed = int((time.perf_counter() - started) * 1000)
