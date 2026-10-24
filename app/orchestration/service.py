@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from app.core.logger import get_logger
 from app.orchestration.intent import recognize_intent
 from app.orchestration.models import IntentResult, RouteDecision
+from app.orchestration.router import ALL_KB_IDS
 from app.orchestration.qa_cache import QALookupResult, QARetriever, get_qa_retriever
 from app.orchestration.router import route
 from config import Settings, get_settings
@@ -88,6 +89,50 @@ def analyze_query(
     s = settings or get_settings()
     query = (query or "").strip()
     started = time.perf_counter()
+
+    # 0) 缓存前置：先查 Redis 精确缓存（0.1ms 级），命中就直接走 pure_structured，
+    #    跳过 LLM 意图识别（~1s）。高频问题 TTFT 从 ~2s 砍到 ~0.1s。
+    qa_retriever = qa_retriever or get_qa_retriever()
+    exact_hit = qa_retriever.lookup_exact(query)
+    if exact_hit is not None:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        # 构造伪意图结果：标记 source="cache"，不调 LLM
+        intent_result = IntentResult(
+            intent=exact_hit.intent,
+            rewrite_type="direct",
+            sub_queries=[query],
+            complexity="simple",
+            hit_structured=True,
+            structured_topic=exact_hit.category or None,
+            law_hints=[],
+            source="cache",
+        )
+        kb_ids = [exact_hit.kb_id] if exact_hit.kb_id else list(ALL_KB_IDS)
+        cached_route = RouteDecision(
+            route="pure_structured",
+            kb_ids=kb_ids,
+            use_mysql_qa=True,
+            use_milvus=False,
+            reason="精确缓存命中：标准答案直接回放，不调 LLM 意图识别",
+        )
+        qa_result = QALookupResult(
+            hit=exact_hit,
+            source="redis_exact",
+            similarity=1.0,
+            elapsed_ms=elapsed_ms,
+        )
+        logger.info(
+            "缓存前置命中 q=%.40s qa_id=%s 跳过意图识别 耗时=%dms",
+            query, exact_hit.id, elapsed_ms,
+        )
+        return QueryPlan(
+            query=query,
+            intent=intent_result,
+            route=cached_route,
+            qa=qa_result,
+            sub_queries=[query],
+            elapsed_ms=elapsed_ms,
+        )
 
     # 1) 意图识别（LLM，失败自动降级规则）
     intent_result = recognize_intent(query, history=history, settings=s)

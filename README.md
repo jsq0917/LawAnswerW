@@ -2,9 +2,10 @@
 
 面向中国法律条文的 **多路 RAG 问答系统**：把《劳动合同法》《劳动法》《民法典》按"编→章→节→条→款"结构化切块，用 bge-m3 的稠密 + 稀疏双向量存入 Milvus，配合 MySQL 高频问答对与 Redis 热缓存做双源路由，经 RRF 融合与 bge-reranker-v2-m3 重排后，由可切换的大模型（默认 DeepSeek `deepseek-flash`）**流式**生成带法条引用的回答。
 
-> 当前进度：**阶段 6（前端 6 页）已完成并验收** —— 登录/注册、对话（三栏 + 流式）、知识库管理、解析、块预览/编辑共 6 页；
-> 真实 LLM 生成（`deepseek-flash`）与 20 条意图样本评估均已补跑通过（阶段 4/5 记录第六节）。
-> 完整设计见 [`LawAnswer 项目总体设计方案.md`](./LawAnswer%20项目总体设计方案.md)。
+> 当前进度：**8 个阶段全部完成** —— 解析入库、混合检索、意图路由、流式生成、前端 6 页、评估闭环已验收；
+> 阶段 8 交付物已就位：`scripts/bootstrap.ps1`（一键跑通，实测 65.5s）、`scripts/demo.py`（10 问覆盖 6 路由，10/10 通过）、
+> 简历项目描述见 [`docs/简历项目描述.md`](./docs/简历项目描述.md)。
+> 完整设计见 [`LawAnswer 项目总体设计方案.md`](./LawAnswer%20项目总体设计方案.md)，评估数据见 [`REPORT.md`](./REPORT.md)。
 
 ## 技术栈
 
@@ -19,7 +20,90 @@
 | 评估 | ragas 0.3.0（独立依赖组） |
 | 前端 | Vue 3.5 + Vite 7 + TypeScript + Pinia + Vue Router + Element Plus |
 
-## 快速开始（阶段 1）
+## 架构总览
+
+```mermaid
+flowchart TB
+    UI["前端 Vue3 + Element Plus<br/>对话 / 知识库 / 解析 / 块编辑 6 页（:5180）"]
+    API["FastAPI 网关（:8101）<br/>request_id 中间件 · 统一错误 · SSE"]
+    ORCH["编排层 orchestration<br/>意图识别（LLM + 规则兜底）→ 六分支路由"]
+    RET["检索层 retrieval<br/>bge-m3 稠密+稀疏 → RRF 融合 → reranker 重排 → 父块回填"]
+    GEN["生成层 generation<br/>六段式 Prompt · 上下文装配 · SSE 流式落库"]
+    ING["解析层 ingest<br/>清洗 → 归一化 → 父子分块 → 向量化"]
+
+    MY[("MySQL 3307<br/>用户/会话/高频问答 ngram")]
+    MI[("Milvus 19531<br/>law_chunks partition=kb_id")]
+    RD[("Redis 6380<br/>QA 缓存 / 幂等")]
+    MO[("MinIO 9002<br/>原文件")]
+    LLM["LLM（OpenAI 兼容）<br/>DeepSeek deepseek-flash"]
+
+    UI -->|"/api 代理 + SSE"| API
+    API --> ORCH
+    ORCH -->|"结构化命中"| MY
+    ORCH -->|"法条检索"| RET
+    ORCH --> RD
+    RET <--> MI
+    ORCH --> GEN
+    GEN --> LLM
+    GEN --> MY
+    ING --> MI
+    ING --> MY
+    ING --> MO
+```
+
+**双源路由**：一次问答先看"是不是高频问题"（MySQL + 向量双门判定），再看"要不要查法条"（Milvus），
+两者可以叠加也可以各自单走，因此有 6 条分支：
+
+```mermaid
+flowchart LR
+    Q[用户问题] --> I{"意图识别<br/>五分类 + 结构化命中"}
+    I -->|"greeting / 无关"| A["固定话术<br/>不调 LLM、不检索"]
+    I -->|"高频问题精确命中"| B["pure_structured<br/>MySQL 标准答案回放"]
+    I -->|"命中话题但无精确答案"| C["hybrid<br/>结构化结论 + 法条依据"]
+    I -->|"纯法条问题"| D["pure_vector<br/>Milvus 混合检索 + 重排"]
+    I -->|"跨法域 / 泛法律"| E["cross_law<br/>多库检索 + 分法条陈述"]
+    C --> G[LLM 流式生成 + 来源列表]
+    D --> G
+    E --> G
+```
+
+## 5 分钟一键跑通（推荐）
+
+```powershell
+# 前置：Docker Desktop 已启动、uv 已安装、密钥已写入用户环境变量
+setx DEEPSEEK_API_KEY sk-xxxx        # 新开终端生效
+
+cd E:\project\LawAnswer
+.\scripts\bootstrap.ps1
+```
+
+一条命令串行完成 10 步，全程幂等、失败即停并给出下一步建议：
+
+| 步骤 | 动作 | 幂等性 |
+|---|---|---|
+| 1 | 检查 docker / uv / 密钥 / `.env` | — |
+| 2 | `docker compose up -d` 并等 5 个服务端口就绪 | 已运行则跳过 |
+| 3 | `uv sync`（GPU 版 torch 自动加 `--no-install-package torch` 保护） | 已同步则 0.5s |
+| 4 | 建 MySQL 表 + 种子数据 | 重复执行安全 |
+| 5 | 建 Milvus collection `law_chunks` | 已存在则跳过 |
+| 6 | 下载 bge-m3 / reranker（约 4.4GB） | 已完整则跳过 |
+| 7 | 启动后端并轮询健康 | 端口占用则复用 |
+| 8 | 创建 `kb_labor` / `kb_civil` | 已存在则跳过 |
+| 9 | 入库三部法律（内容未变则 SHA1 跳过） | 已入库则 0.1s |
+| 10 | 跑 `scripts/demo.py` 冒烟（10 问覆盖 6 路由） | — |
+
+常用开关：
+
+```powershell
+.\scripts\bootstrap.ps1 -SkipModels        # 模型已手工放好
+.\scripts\bootstrap.ps1 -SkipIngest        # 只起服务，不入库
+.\scripts\bootstrap.ps1 -SkipSync -SkipModels -SkipIngest   # 最快路径
+.\scripts\bootstrap.ps1 -Reset             # 重建 Milvus collection（清空向量）
+```
+
+实测：依赖与数据齐备时 **65.5s** 走完 10 步，冒烟演示 **10/10 通过**。
+
+## 手动分步（想逐步排查时用）
 
 ```bash
 # 1. 安装依赖
@@ -163,11 +247,76 @@ curl -N -X POST http://127.0.0.1:8101/api/chat/stream \
 历史对话传 `history: [{role, content}]`（自动按 5 轮 / 2000 token 预算裁剪）；
 落库传 `session_id`（**需要登录**，且会话归属当前用户）。
 
+## API 文档
+
+交互式文档：`http://127.0.0.1:8101/docs`（Swagger）/ `/redoc`。下表是全量端点清单。
+
+### 元信息与会话
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/health` | 依赖健康检查（MySQL/Redis/Milvus 状态 + 延迟 + 是否配置 LLM 密钥） |
+| GET | `/api/health/live` | 存活探针（不探测依赖），压测与 bootstrap 用它做就绪判定 |
+| POST | `/api/auth/captcha` | 获取图形验证码（Base64 图片 + captcha_id） |
+| GET | `/api/auth/check-username` | 注册页实时查重 |
+| POST | `/api/auth/register` | 注册（201） |
+| POST | `/api/auth/login` | 登录，返回 JWT |
+| GET | `/api/auth/me` | 当前登录用户（需 Bearer Token） |
+| GET | `/api/sessions` | 会话列表（按最近活跃排序） |
+| POST | `/api/sessions` | 新建会话（201） |
+| PATCH | `/api/sessions/{id}` | 重命名 / 改参数 |
+| DELETE | `/api/sessions/{id}` | 删除会话（软删） |
+| GET | `/api/sessions/{id}/messages` | 消息历史（升序） |
+
+### 知识库与文档
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/kbs` | 知识库列表（含文档数 / 块数） |
+| POST | `/api/kbs` | 新建知识库（201，id 规则 `^[a-z0-9_]+$`） |
+| GET | `/api/kbs/{kb_id}/documents` | 文档列表（含状态 / 进度 / 条数 / SHA1） |
+| POST | `/api/kbs/{kb_id}/documents` | 上传并异步解析（202，返回 doc_id + job） |
+| GET | `/api/documents/{doc_id}` | 文档详情（含解析进度与错误） |
+| DELETE | `/api/documents/{doc_id}` | 删除文档（含向量） |
+| POST | `/api/documents/{doc_id}/reingest` | 重新解析（202，源文件缺失则报错） |
+| GET | `/api/documents/{doc_id}/chunks` | 块列表（分页 + 关键词 + 类型过滤） |
+| PATCH | `/api/chunks/{chunk_id}` | 编辑块（触发该块重新向量化） |
+| DELETE | `/api/chunks/{chunk_id}` | 删除块（软删 + 删向量） |
+| POST | `/api/ingest/local` | 把 `data/raw` 下文件直接入库（同步，调试用；参数 `kb_id` / `filename` / `chunk_size` / `overlap` / `force`） |
+
+### 问答与调试
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/chat/stream` | **正式问答**，SSE 流式（详见下节） |
+| POST | `/api/intent/preview` | 意图识别与路由预览：返回 intent / route / qa / sub_queries / degraded |
+| POST | `/api/retrieval/preview` | 检索预览：返回每条命中的融合分、重排分、父块内容 |
+
+`/api/chat/stream` 事件协议（`text/event-stream`）：
+
+```
+event: stage    data: {"stage": "intent"|"retrieval"|"rerank"|"generate"}
+event: meta     data: {"message_id","intent","route","rewrite_type","complexity","cached","degraded"}
+event: sources  data: {"sources":[{"law_name","article_no","chapter_path","score","snippet","kind"}]}
+event: delta    data: {"text": "..."}          # 逐段输出，前端拼成打字机
+event: done     data: {"ttft_ms","latency_ms","token_usage","sources_count","cached"}
+event: error    data: {"code","message","retriable"}
+```
+
+调用示例：
+
+```bash
+curl -N http://127.0.0.1:8101/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"query":"试用期最长可以约定多久？","kb_ids":["kb_labor"]}'
+```
+
 ## 常见问题
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `WinError 10013` 启动失败 | 端口被 Windows 保留/占用 | 改 `SERVER_PORT`（本机 8100 不可用，已用 8101） |
+| `uv sync` 把 GPU 版 torch 换回 CPU 版 | `pyproject.toml` 里 torch 声明为 CPU 版，与手工装的 `2.14.1+cu130` 不一致 | 用 `uv sync --no-install-package torch`，后续 `uv run` 加 `--no-sync`；`bootstrap.ps1` 已自动处理。重装 GPU 版：`uv pip install E:\temp_torch\torch-2.14.1+cu130-cp313-cp313-win_amd64.whl` |
 | 下载模型报 `401 Unauthorized ... cas-server.xethub.hf.co` | huggingface_hub 2.x 默认走 Xet，镜像站不代理 | 脚本已设 `HF_HUB_DISABLE_XET=1`，无需手工处理 |
 | 下载模型报 `ProxyError: 502` | 本机代理（如已设 `HTTPS_PROXY`）抖动 | `--retries 3` 重试，或临时 `set HTTPS_PROXY=` 走直连 |
 | `uv run python -m ...` 报模块找不到 | 需在项目根目录执行，`python -m` 才会把根目录加入 sys.path | `cd E:/project/LawAnswer` 后再执行 |
@@ -219,16 +368,27 @@ uv run python -m app.eval.ragas_eval
 uv run python -m app.eval.loadtest --levels 1 5 10 20
 ```
 
-当前结果（本机 CPU、`deepseek-flash`）：
+```bash
+# 交付演示：10 个典型问题覆盖 6 条路由（需后端在跑）
+uv run python -m scripts.demo
+uv run python -m scripts.demo -v --json eval/results/demo.json
+```
+
+当前结果（本机 RTX 4060 Laptop / CUDA 13.0 + `deepseek-flash`，即 `REPORT.md` 最终配置）：
 
 | 项 | 实测 | 目标 |
 |---|---|---|
 | 意图 acc / macro-F1 | **1.0000 / 1.0000** | ≥0.90 / ≥0.88 ✅ |
-| 检索 Recall@5（L3 最终方案） | 0.7024（单跳 1.000） | ≥0.85 ❌ |
-| RAGAS faithfulness | 0.5189 | ≥0.85 ❌ |
-| 压测 QPS（并发 10） | 0.289 | ≥3 ❌ |
+| 检索 Recall@5（L6 法域过滤后） | 0.7071（单跳 15/15 = 1.000） | ≥0.85 ❌ |
+| 检索 MRR | 0.6886 | ≥0.75 ❌ |
+| 法条截断率 | **0.00%** | ≤3% ✅ |
+| RAGAS faithfulness | 0.7075（收紧 Prompt 前 0.5189） | ≥0.85 ❌ |
+| 无答案不编造 | 5/5 | 是 ✅ |
+| 压测 QPS（并发 10 / 20） | **1.994 / 2.686**（CPU 时 0.289 / 0.303） | ≥3 ❌ |
+| 压测错误率 | **0.00%**（240/240） | ≤1% ✅ |
 
-未达标项的根因与改法见 `REPORT.md` §8.2（检索是 RRF 稀释 + 单查询直检；忠实度是 Prompt 实务段无出处；性能是 CPU 推理）。
+未达标项的根因与改法见 `REPORT.md` §8.2：检索是"多跳未走子查询分解"（加权 RRF 已证伪、法域过滤部分有效）；
+忠实度剩余缺口来自计算示例代入值与免责句（Prompt 收紧已 +18.9pt）；性能瓶颈已从检索转为两次 LLM 调用。
 
 ## 目录结构
 
@@ -249,7 +409,7 @@ frontend/              阶段 6：Vue3 6 页（views / components / stores / api
 eval/                  阶段 7：qa_test_cases.jsonl（40 条样本）+ datasets/ + results/（评估产物）
 config.py              唯一配置源（pydantic-settings）
 mysql/init/            建表 + 知识库种子数据
-scripts/               模型下载、Milvus 初始化
+scripts/               模型下载、Milvus 初始化、bootstrap.ps1（一键跑通）、demo.py（交付演示）
 tests/                 单元测试（离线）
 REPORT.md              阶段 7 评估报告（环境/语料/消融/意图/RAGAS/压测/结论）
 ```
@@ -265,4 +425,4 @@ REPORT.md              阶段 7 评估报告（环境/语料/消融/意图/RAGAS
 | 5 | 生成链路 | ✅ 完成（已验收；真实 `deepseek-flash` 流式生成 + 法条引用核对通过） |
 | 6 | 前端 6 页 | ✅ 完成（已验收；走查截图见 `docs/screenshots/`） |
 | 7 | 测试与评估 | ✅ 完成（已验收；四件套脚本 + 40 条 QA + 五组消融 + RAGAS + 压测，结果见 `REPORT.md`；3 类指标未达标，根因与改法已写明） |
-| 8 | 交付与演示 | 待开始 |
+| 8 | 交付与演示 | ✅ 完成（一键 bootstrap 65.5s 走通 10 步；demo 10 问覆盖 6 路由 10/10 通过；README 架构图 + API 文档 + 简历 STAR） |

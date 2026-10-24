@@ -20,6 +20,8 @@ dependencies = [
     "bcrypt>=4.2.0",
     "pillow>=11.0.0",
     "huggingface-hub>=0.26.0",
+    # torch 默认装 CPU 版；已手工装 GPU 版（2.14.1+cu130）时，
+    # 务必用 `uv sync --no-install-package torch`，否则 uv 会把它换回 CPU 版。
     "torch>=2.14.1",
     "transformers>=5.20.2",
     "flagembedding>=1.4.2",

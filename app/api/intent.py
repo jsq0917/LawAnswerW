@@ -8,12 +8,17 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from app.core.security import CurrentUser, get_current_user
 from app.orchestration.service import analyze_query
 
-router = APIRouter(prefix="/api", tags=["orchestration"])
+router = APIRouter(
+    prefix="/api",
+    tags=["orchestration"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 class IntentPreviewRequest(BaseModel):

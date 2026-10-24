@@ -147,7 +147,8 @@ class RetrievalConfig:
     topk_simple: int
     topk_medium: int
     topk_complex: int
-    ranker: str = "weighted"
+    # 融合策略不在这里：由顶层 `retrieval_ranker` 统一控制（"rrf" | "weighted"），
+    # 消融结论是等权 RRF 优于加权，见 REPORT.md §4.4。
     dense_weight: float = 0.75
     sparse_weight: float = 0.25
 
@@ -283,6 +284,10 @@ class Settings(BaseSettings):
     gen_replay_chunk_chars: int = Field(default=30, ge=5, le=500)
     gen_sources_limit: int = Field(default=10, ge=1, le=50)
 
+    # ---- 限流（chat 接口，防 LLM 费用被刷爆）----
+    rate_limit_anonymous: int = Field(default=20, ge=1, le=600, description="匿名用户每分钟最大请求数")
+    rate_limit_authed: int = Field(default=60, ge=1, le=1000, description="登录用户每分钟最大请求数")
+
     # ---- 日志 ----
     log_dir: str = "logs"
     log_level: str = "INFO"
@@ -328,6 +333,12 @@ class Settings(BaseSettings):
             raise ValueError("topK 必须满足 simple <= medium <= complex")
         if self.app_env not in {"dev", "test", "prod"}:
             raise ValueError(f"APP_ENV 只能是 dev/test/prod，收到 {self.app_env!r}")
+        # 生产环境必须显式设置 JWT_SECRET，不能用默认值（否则 JWT 可被伪造）
+        if self.app_env == "prod" and self.jwt_secret == "dev-only-change-me-in-production":
+            raise ConfigError(
+                "生产环境必须通过环境变量 JWT_SECRET 设置一个强随机密钥，"
+                "不能使用默认值 dev-only-change-me-in-production"
+            )
         return self
 
     # ------------------------------------------------------------------
@@ -407,7 +418,6 @@ class Settings(BaseSettings):
             topk_simple=self.retrieval_topk_simple,
             topk_medium=self.retrieval_topk_medium,
             topk_complex=self.retrieval_topk_complex,
-            ranker=self.retrieval_ranker,
             dense_weight=self.retrieval_dense_weight,
             sparse_weight=self.retrieval_sparse_weight,
         )
@@ -536,7 +546,6 @@ def get_dashscope_api_key() -> str:
 def require_dashscope_api_key() -> str:
     """兼容旧调用点：等价于 :func:`require_llm_api_key`。"""
     return require_llm_api_key()
-    return key
 
 
 def mask_secret(value: str, keep: int = 4) -> str:

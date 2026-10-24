@@ -28,6 +28,7 @@ from starlette.concurrency import iterate_in_threadpool
 from starlette.responses import StreamingResponse
 
 from app.api.sessions import get_owned_session
+from app.core.ratelimit import check_rate_limit
 from app.core.security import CurrentUser, TokenError, get_current_user_optional
 from app.core.sse import SSE_HEADERS, SSE_MEDIA_TYPE
 from app.db.mysql import get_db
@@ -55,6 +56,9 @@ async def chat_stream(
         if user is None:
             raise TokenError("会话模式需要登录")
         get_owned_session(db, payload.session_id, user.id)
+
+    # 限流：匿名按 IP 20 次/分，登录按 uid 60 次/分（防 LLM 费用被刷爆）
+    check_rate_limit(request, user_id=user.id if user else None)
 
     engine = AnswerEngine()
     frames = engine.stream(

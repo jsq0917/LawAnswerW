@@ -165,6 +165,8 @@ class TestChatStreamAPI:
             "app.api.chat.AnswerEngine",
             lambda **kw: AnswerEngine(llm_client=FakeLLMStream(), retrieve_fn=retrieve),
         )
+        # 测试环境绕过限流（避免连续测试触发限流）
+        monkeypatch.setattr("app.api.chat.check_rate_limit", lambda *a, **kw: None)
         from app.main import app
 
         client = TestClient(app)

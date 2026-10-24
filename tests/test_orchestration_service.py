@@ -57,9 +57,15 @@ class FakeQARetriever:
     def __init__(self, result: QALookupResult | None = None) -> None:
         self.result = result or QALookupResult()
         self.calls: list[dict] = []
+        self.exact_hit: QAPair | None = None  # 缓存前置命中时返回
+
+    def lookup_exact(self, query):
+        """缓存前置：默认不命中，测试可预设 exact_hit。"""
+        self.calls.append({"method": "lookup_exact", "query": query})
+        return self.exact_hit
 
     def lookup(self, query, *, structured_topic=None, kb_ids=None):
-        self.calls.append({"query": query, "structured_topic": structured_topic, "kb_ids": kb_ids})
+        self.calls.append({"method": "lookup", "query": query, "structured_topic": structured_topic, "kb_ids": kb_ids})
         return self.result
 
 
@@ -111,7 +117,9 @@ class TestVectorFlow:
         plan = analyze_query("劳动合同法第三十九条原文是什么", qa_retriever=qa)
         assert plan.route.route == "pure_vector"
         assert plan.route.use_mysql_qa is False
-        assert qa.calls == []  # ← 未查问答表
+        # 缓存前置会调一次 lookup_exact（0.1ms 级），但不调完整 lookup()（BM25+余弦）
+        assert all(c["method"] == "lookup_exact" for c in qa.calls)
+        assert not any(c["method"] == "lookup" for c in qa.calls)
         assert plan.route.use_milvus is True
 
 
@@ -121,7 +129,9 @@ class TestGreetingFlow:
         qa = FakeQARetriever()
         plan = analyze_query("你好", qa_retriever=qa)
         assert plan.route.route == "greeting"
-        assert qa.calls == []
+        # 缓存前置会调一次 lookup_exact，但 greeting 不需要完整 qa lookup
+        assert all(c["method"] == "lookup_exact" for c in qa.calls)
+        assert not any(c["method"] == "lookup" for c in qa.calls)
         assert plan.sub_queries == ["试用期最长期限"] or plan.sub_queries  # 改写结果仍保留
 
 
@@ -143,7 +153,13 @@ class TestDegradedFlow:
         assert plan.route.use_milvus is False
 
     def test_no_key_still_works(self, monkeypatch):
-        """无 DASHSCOPE_API_KEY：不注入客户端时走真实 get_intent_client → ConfigError → 规则兜底。"""
+        """未配置任何大模型密钥：走真实 get_intent_client → ConfigError → 规则兜底。
+
+        必须显式清掉三个密钥变量，否则本机一旦配了 DEEPSEEK_API_KEY，这条用例会
+        真的去调线上 LLM（既烧钱又让"全离线"承诺失效）。
+        """
+        for name in ("LLM_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"):
+            monkeypatch.delenv(name, raising=False)
         qa = FakeQARetriever()
         plan = analyze_query("试用期最长可以约定多久", qa_retriever=qa)
         assert plan.degraded is True

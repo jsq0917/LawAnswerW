@@ -29,6 +29,8 @@ from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from typing import Any
 
+import numpy as np
+
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
@@ -189,6 +191,22 @@ class QARetriever:
     # ------------------------------------------------------------------
     # 主入口
     # ------------------------------------------------------------------
+    def lookup_exact(self, query: str) -> QAPair | None:
+        """只查 Redis 精确缓存（0.1ms 级），不做 BM25 / 余弦门。
+
+        用于编排层"缓存前置"：高频问题命中精确缓存就直接回放，
+        跳过 LLM 意图识别，把 TTFT 从 ~2s 砍到 ~0.1s。
+        未命中返回 None，调用方再走完整的 lookup()。
+        """
+        query = (query or "").strip()
+        if not query:
+            return None
+        norm = normalize_question(query)
+        hit = self._lookup_exact_cache(norm)
+        if hit is not None:
+            logger.info("精确缓存前置命中 q=%.40s id=%s", query, hit.id)
+        return hit
+
     def lookup(
         self,
         query: str,
@@ -357,11 +375,12 @@ class QARetriever:
         except Exception as exc:  # noqa: BLE001
             logger.warning("余弦门编码失败，按不命中处理: %s", exc)
             return None
-        a, b = vecs[0].dense, vecs[1].dense
-        denom = (sum(x * x for x in a) ** 0.5) * (sum(x * x for x in b) ** 0.5)
+        a = np.asarray(vecs[0].dense, dtype=np.float32)
+        b = np.asarray(vecs[1].dense, dtype=np.float32)
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
         if denom == 0:
             return None
-        return sum(x * y for x, y in zip(a, b)) / denom
+        return float(np.dot(a, b) / denom)
 
 
 class _NullRedis:

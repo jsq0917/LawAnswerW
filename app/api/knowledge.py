@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, NotFoundError, ValidationFailed
 from app.core.logger import get_logger
+from app.core.security import get_current_user
 from app.db.mysql import get_db
 from app.ingest.loaders import detect_file_type
 from app.ingest.pipeline import ingest_file, new_id
@@ -33,7 +34,11 @@ from config import BASE_DIR
 
 logger = get_logger("lawanswer.kb")
 
-router = APIRouter(prefix="/api", tags=["kbs"])
+router = APIRouter(
+    prefix="/api",
+    tags=["kbs"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 # ---------------------------------------------------------------------------

@@ -257,7 +257,11 @@ class AnswerEngine:
     # 内部步骤
     # ------------------------------------------------------------------
     def _retrieve(self, plan: QueryPlan, settings: Settings) -> tuple[list, str | None]:
-        """按子查询逐条检索并合并去重。返回 ``(hits, degraded)``。
+        """按子查询逐条检索并合并去重，全局重排后截断到最终 topK。
+
+        多跳优化：每个子查询先取 2 倍 topK 的候选池，合并去重后统一按
+        rerank_score 排序，再截断到最终 topK。这样子查询 A 的第 3 名和
+        子查询 B 的第 5 名会在同一个池子里公平排序，而不是各取各的 topK。
 
         Milvus/检索异常 → 第 5 层容错：空列表 + degraded 标记，
         由调用方决定降级回答还是引导话术。
@@ -265,6 +269,10 @@ class AnswerEngine:
         from app.retrieval.service import retrieve
 
         fn = self._retrieve_fn or retrieve
+        # 最终目标 topK（按 complexity）
+        final_topk = settings.retrieval.topk_for(plan.intent.complexity)
+        # 每个子查询取 1.5 倍 topK 的候选池（从 2× 收紧，减少噪声法条引入）
+        per_subquery_topk = int(final_topk * 1.5)
         merged: dict[str, Any] = {}
         reranked = False
         try:
@@ -273,6 +281,7 @@ class AnswerEngine:
                     sub_query,
                     kb_ids=list(plan.route.kb_ids) or None,
                     complexity=plan.intent.complexity,
+                    topk=per_subquery_topk,
                     law_hints=list(plan.intent.law_hints) or None,
                     settings=settings,
                 )
@@ -285,14 +294,17 @@ class AnswerEngine:
         except Exception as exc:  # noqa: BLE001 - 检索故障降级，不打断链路
             logger.warning("检索失败，降级处理（%s: %s）", type(exc).__name__, str(exc)[:200])
             return [], "vector_unavailable"
+        # 全局按 rerank_score 排序，截断到最终 topK
         hits = sorted(
             merged.values(),
             key=lambda h: h.rerank_score if h.rerank_score is not None else h.score,
             reverse=True,
-        )
+        )[:final_topk]
         logger.info(
-            "检索合并完成：子查询 %d 条 → 去重后 %d 条（重排=%s）",
+            "检索合并完成：子查询 %d 条 × topK=%d → 去重后 %d 条 → 截断到 %d 条（重排=%s）",
             len(plan.sub_queries or [plan.query]),
+            per_subquery_topk,
+            len(merged),
             len(hits),
             reranked,
         )

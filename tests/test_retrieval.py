@@ -170,9 +170,20 @@ class TestRetrieve:
         retrieve("试用期多久", client=fake, embedder=DummyEmbedder(), reranker=DummyReranker())
         assert fake.calls[0]["type"] == "hybrid"
 
-    def test_default_ranker_is_weighted_dense_first(self, fake):
-        """默认稠密主导（0.75/0.25）：等权 RRF 在跨法近义条上会稀释稠密信号。"""
-        retrieve("试用期多久", client=fake, embedder=DummyEmbedder(), reranker=DummyReranker())
+    def test_default_ranker_is_rrf(self, fake, settings_factory):
+        """默认等权 RRF：加权（0.75/0.25）在消融里无收益甚至略降，已回退（REPORT.md §4.4）。"""
+        s = settings_factory()
+        assert s.retrieval_ranker == "rrf"
+        retrieve("试用期多久", client=fake, embedder=DummyEmbedder(),
+                 reranker=DummyReranker(), settings=s)
+        spec = fake.calls[0]["ranker"].dict()
+        assert spec["strategy"] == "rrf"
+
+    def test_weighted_ranker_when_configured(self, fake, settings_factory):
+        """显式配成 weighted 时走 WeightedRanker，权重取 0.75/0.25。"""
+        s = settings_factory(retrieval_ranker="weighted")
+        retrieve("试用期多久", client=fake, embedder=DummyEmbedder(),
+                 reranker=DummyReranker(), settings=s)
         spec = fake.calls[0]["ranker"].dict()
         assert spec["strategy"] == "weighted"
         assert spec["params"]["weights"] == [0.75, 0.25]

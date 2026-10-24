@@ -225,6 +225,42 @@ def reset_intent_client() -> None:
     _build_intent_client.cache_clear()
 
 
+def _fast_rule_precheck(query: str) -> IntentResult | None:
+    """快速规则前置：常见法律问题关键词直接分类，跳过 LLM 意图识别（~1s）。
+
+    匹配上就直接返回 IntentResult，source="fast_rules"；没匹配上返回 None，
+    继续走 LLM 路径。目标：覆盖 80% 高频问题，TTFT 砍 ~1s。
+    """
+    import re
+
+    q = query.strip()
+    if not q:
+        return None
+
+    q_lower = q.lower()
+
+    # 1) 问候语 → 直接路由 greeting，不需要后续检索，跳过 LLM 安全
+    greetings = ["你好", "您好", "在吗", "hi", "hello", "嗨", "请问", "谢谢", "多谢"]
+    if any(q_lower.startswith(g.lower()) for g in greetings):
+        return IntentResult(
+            intent="greeting",
+            rewrite_type="direct",
+            sub_queries=[q],
+            complexity="simple",
+            hit_structured=False,
+            structured_topic=None,
+            law_hints=[],
+            need_history=False,
+            source="fast_rules",
+        )
+
+    # 法律问题关键词暂不前置：意图识别结果会影响路由判断（hybrid/pure_structured/pure_vector），
+    # 前置规则返回的"猜测 intent"和 LLM 实际判断可能不一致，破坏路由逻辑。
+    # 后续优化方向：缓存常用问题的意图识别结果（Redis 缓存 recognize_intent 的输出），
+    # 而不是直接猜测 intent。
+    return None
+
+
 def recognize_intent(
     query: str,
     *,
@@ -232,7 +268,7 @@ def recognize_intent(
     client: LLMClient | None = None,
     settings: Settings | None = None,
 ) -> IntentResult:
-    """意图识别入口：优先 LLM，任何失败都降级到规则兜底。
+    """意图识别入口：快速规则前置 → LLM → 规则兜底。
 
     :param query: 用户当前问题
     :param history: 最近对话，``[{"role": "user"|"assistant", "content": "..."}]``
@@ -241,6 +277,17 @@ def recognize_intent(
     query = (query or "").strip()
     if not query:
         return rule_based_intent(query, list(history) if history else None)
+
+    # 0) 快速规则前置：常见问题直接分类，跳过 LLM（~1s）
+    #    注意：显式注入 client 时跳过（测试场景要测 LLM 路径）
+    if client is None:
+        pre = _fast_rule_precheck(query)
+        if pre is not None:
+            logger.info(
+                "意图识别(快速规则) q=%.40s intent=%s complexity=%s source=fast_rules",
+                query, pre.intent, pre.complexity,
+            )
+            return pre
 
     s = settings or get_settings()
     started = time.perf_counter()
