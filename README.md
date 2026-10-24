@@ -200,7 +200,9 @@ curl -X POST http://127.0.0.1:8101/api/intent/preview \
 
 DeepSeek 需额外设 `LLM_THINKING=disabled`：官方**默认开启思考模式**，而思考模式下
 `temperature` 无效、默认输出上限从 8K 变 64K、延迟与费用都明显上升；RAG 问答与意图识别都用非思考模式。
-DashScope / OpenAI 没有这个参数，留空即可（不会发送）。
+**DashScope 的 qwen3 系（qwen-flash 等）同样要设 `LLM_THINKING=disabled`**：它们默认动态思考，
+隐藏推理不计入流式输出（表现为 TTFT≈总延迟，实测首 token 前 17-26s）；代码会自动把该配置
+翻译成 DashScope 的 `enable_thinking: false`。其他 OpenAI 兼容厂商留空即可（不会发送）。
 
 密钥按 `LLM_API_KEY` → `DEEPSEEK_API_KEY` → `DASHSCOPE_API_KEY` 顺序取第一个非空值；
 **只从系统环境变量读**，写进 `.env` 会被启动自检拒绝（`config.assert_secrets_not_in_dotenv`）。

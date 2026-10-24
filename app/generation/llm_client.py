@@ -99,12 +99,22 @@ class LLMClient:
         # max_retries=0：重试由本类的指数退避统一负责，避免 SDK 内重试叠加
         self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s, max_retries=0)
         self._model = model
+        self._base_url = base_url or ""
         self._max_retries = max_retries
-        #: DeepSeek 的 thinking 参数（enabled/disabled/空=不传）。
-        #: 官方默认 **enabled**：思考模式下 temperature 无效、默认 max_tokens 64K、
-        #: 延迟与费用都显著上升；RAG 问答与意图识别都用非思考模式，故由配置显式关闭。
-        #: 其他厂商（DashScope/OpenAI）不认识该参数，留空即不发送。
+        #: 思考模式开关（enabled/disabled/空=不传），按 provider 适配参数形态：
+        #: - DeepSeek：官方默认 enabled，思考模式下 temperature 无效、输出上限 64K、
+        #:   延迟与费用显著上升，参数形态 ``thinking: {type: ...}``；
+        #: - DashScope qwen3 系（qwen-flash 等）：**默认动态思考**，RAG 生成实测
+        #:   首 token 前 17-26s 隐藏推理（TTFT≈总延迟），参数形态 ``enable_thinking``；
+        #: - 其他 OpenAI 兼容厂商：不传。
         self._thinking = thinking.strip().lower()
+
+    def _thinking_kwargs(self) -> dict[str, Any]:
+        if self._thinking not in {"enabled", "disabled"}:
+            return {}
+        if "dashscope" in self._base_url:
+            return {"extra_body": {"enable_thinking": self._thinking == "enabled"}}
+        return {"extra_body": {"thinking": {"type": self._thinking}}}
 
     # ------------------------------------------------------------------
     # 对外入口
@@ -128,8 +138,7 @@ class LLMClient:
             kwargs["max_tokens"] = max_tokens
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-        if self._thinking in {"enabled", "disabled"}:
-            kwargs["extra_body"] = {"thinking": {"type": self._thinking}}
+        kwargs.update(self._thinking_kwargs())
 
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
@@ -201,8 +210,7 @@ class LLMClient:
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        if self._thinking in {"enabled", "disabled"}:
-            kwargs["extra_body"] = {"thinking": {"type": self._thinking}}
+        kwargs.update(self._thinking_kwargs())
 
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
