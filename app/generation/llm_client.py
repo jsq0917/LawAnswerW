@@ -1,22 +1,22 @@
 """DashScope（OpenAI 兼容模式）LLM 客户端。
 
-意图识别与生成链路共用。设计要点：
+意图识别与生成链路各持一个按参数缓存的实例（同库不同超时/重试）：
 
-* **密钥只从系统环境变量读**（``DASHSCOPE_API_KEY``），缺 key 直接报
+* **密钥只从系统环境变量读**，缺 key 直接报
   :class:`~config.ConfigError`，不静默降级——调用方自行决定是否走兜底。
-* **超时与重试可配**：意图识别 3s/重试 1 次（快速失败走规则兜底），
+* **超时与重试可配**：意图识别 5s/重试 1 次（快速失败走规则兜底），
   生成 60s/重试 2 次（保质量）。指数退避 ``0.5s * 2^n``。
 * **JSON 模式**：``response_format={"type": "json_object"}`` 强约束输出，
   调用方仍须校验字段（模型可能吐非法 JSON 或漏字段）。
-* 客户端进程级单例，复用底层 HTTP 连接池。
+* 客户端进程级缓存，复用底层 HTTP 连接池；缓存键只用密钥指纹。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache
 from typing import Any, Iterator, Sequence
 
 from openai import OpenAI
@@ -258,24 +258,42 @@ def _backoff_sleep(attempt: int) -> None:
     time.sleep(0.5 * (2**attempt))
 
 
-@lru_cache(maxsize=4)
-def _build_client(
+def _key_fingerprint(api_key: str) -> str:
+    """密钥指纹：缓存键用指纹而非明文，避免 key 留存在缓存键里。"""
+    return hashlib.sha1(api_key.encode("utf-8")).hexdigest()[:12]
+
+
+#: 进程级客户端缓存：键含密钥指纹（不含明文），值持有真实 key 的客户端实例。
+#: 手写 dict 而非 lru_cache，因为 lru_cache 的缓存键就是入参本身——
+#: 构造函数要收明文 key 就必然把明文留在缓存键里，两者不可兼得。
+_CLIENT_CACHE: dict[tuple, LLMClient] = {}
+_CLIENT_CACHE_MAX = 4
+
+
+def _get_cached_client(
     api_key: str, base_url: str, model: str, timeout_s: float, max_retries: int, thinking: str = ""
 ) -> LLMClient:
-    return LLMClient(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        timeout_s=timeout_s,
-        max_retries=max_retries,
-        thinking=thinking,
-    )
+    cache_key = (_key_fingerprint(api_key), base_url, model, timeout_s, max_retries, thinking)
+    client = _CLIENT_CACHE.get(cache_key)
+    if client is None:
+        client = LLMClient(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            timeout_s=timeout_s,
+            max_retries=max_retries,
+            thinking=thinking,
+        )
+        _CLIENT_CACHE[cache_key] = client
+        while len(_CLIENT_CACHE) > _CLIENT_CACHE_MAX:  # 与原 lru_cache(maxsize=4) 行为一致
+            _CLIENT_CACHE.pop(next(iter(_CLIENT_CACHE)))
+    return client
 
 
 def get_llm_client(settings: Settings | None = None) -> LLMClient:
     """进程级单例。缺 key 抛 :class:`~config.ConfigError`。"""
     s = settings or get_settings()
-    return _build_client(
+    return _get_cached_client(
         get_llm_api_key(),
         s.llm_base_url,
         s.llm_default_model,
@@ -287,4 +305,4 @@ def get_llm_client(settings: Settings | None = None) -> LLMClient:
 
 def reset_llm_client() -> None:
     """测试用：清空单例。"""
-    _build_client.cache_clear()
+    _CLIENT_CACHE.clear()

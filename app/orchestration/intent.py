@@ -18,7 +18,6 @@ import hashlib
 import json
 import re
 import time
-from functools import lru_cache
 from typing import Any, Sequence
 
 from app.core.logger import get_logger
@@ -185,7 +184,6 @@ def _recognize_via_llm(
     return _validate(data, query)
 
 
-@lru_cache(maxsize=4)
 def _build_intent_client(
     api_key: str,
     base_url: str,
@@ -194,14 +192,9 @@ def _build_intent_client(
     max_retries: int,
     thinking: str,
 ) -> LLMClient:
-    return LLMClient(
-        api_key=api_key,
-        base_url=base_url,
-        model=model,
-        timeout_s=timeout_s,
-        max_retries=max_retries,
-        thinking=thinking,
-    )
+    from app.generation.llm_client import _get_cached_client
+
+    return _get_cached_client(api_key, base_url, model, timeout_s, max_retries, thinking)
 
 
 def get_intent_client(settings: Settings | None = None) -> LLMClient:
@@ -223,7 +216,9 @@ def get_intent_client(settings: Settings | None = None) -> LLMClient:
 
 
 def reset_intent_client() -> None:
-    _build_intent_client.cache_clear()
+    from app.generation.llm_client import reset_llm_client
+
+    reset_llm_client()
 
 
 # ---------------------------------------------------------------------------

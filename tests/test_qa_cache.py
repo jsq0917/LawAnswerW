@@ -184,10 +184,9 @@ class TestLookupThreeStates:
         assert result.hit is not None
         assert result.source == "mysql_bm25_cosine"
         assert result.similarity == pytest.approx(1.0)
-        # 写了两个缓存 key + 热榜自增
-        assert len(redis.set_calls) == 2
-        assert all(ex in (604800, 86400) for _, ex in redis.set_calls)
-        assert redis.zset.get("7") == 1
+        # 只写精确缓存一个 key（qa:ans/qa:hot 两个只写不读的 key 已移除）
+        assert len(redis.set_calls) == 1
+        assert redis.set_calls[0][1] == 604800
         # MySQL hit_count 自增
         assert any("UPDATE" in sql for sql, _ in engine.executed)
 

@@ -12,12 +12,17 @@ RRF 只看排名不看分数，天然规避了余弦相似度与 IP 分数不可
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from app.ingest.embedder import Embedding
 
 DENSE_FIELD = "dense_vector"
 SPARSE_FIELD = "sparse_vector"
+
+#: 合法知识库 id（与 POST /api/kbs 的创建规则一致）。kb_ids 会拼进 Milvus
+#: 过滤表达式，带引号/特殊字符的值必须拒之门外，否则构成表达式注入面。
+_KB_ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 #: 检索时返回的标量字段（避免把大字段全拉回来）
 OUTPUT_FIELDS = [
@@ -82,7 +87,11 @@ class RetrievalResult:
 def build_kb_filter(kb_ids: list[str] | None) -> str:
     if not kb_ids:
         return ""
-    quoted = ", ".join(f'"{kb}"' for kb in kb_ids)
+    # 只放行 [a-z0-9_]+：这类字符拼不进引号逃逸，注入面被格式校验关死
+    valid = [kb for kb in kb_ids if _KB_ID_RE.match(kb or "")]
+    if not valid:
+        return ""
+    quoted = ", ".join(f'"{kb}"' for kb in valid)
     return f"kb_id in [{quoted}]"
 
 

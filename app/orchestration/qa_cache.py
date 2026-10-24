@@ -44,10 +44,6 @@ logger = get_logger("lawanswer.qa_cache")
 
 #: 精确缓存 key 前缀
 REDIS_EXACT_PREFIX = "qa:exact:"
-#: 单条答案 key 前缀
-REDIS_ANS_PREFIX = "qa:ans:"
-#: 热问题 ZSET
-REDIS_HOT_KEY = "qa:hot"
 
 #: 轻量停用词（BM25 归一化用；保留"怎么/什么"等内容词）
 STOP_WORDS: tuple[str, ...] = (
@@ -300,11 +296,13 @@ class QARetriever:
             return None
 
     def _on_hit(self, norm: str, qa: QAPair) -> None:
-        """命中后写缓存 + 计数 + 热榜。缓存写入失败不影响返回。"""
+        """命中后回写精确缓存 + 自增 MySQL 计数。缓存写入失败不影响返回。
+
+        原 ``qa:ans:{id}`` 与 ``qa:hot`` 两个 key 全工程只写不读（grep 证实
+        无任何消费方），已移除——省 2 次热路径 Redis 写与无用内存。
+        """
         try:
             self.redis.set(cache_key(norm), json.dumps(qa.to_dict(), ensure_ascii=False), ex=self._settings.cache_qa_ttl)
-            self.redis.set(REDIS_ANS_PREFIX + str(qa.id), qa.answer, ex=86400)
-            self.redis.zincrby(REDIS_HOT_KEY, 1, str(qa.id))
         except Exception as exc:  # noqa: BLE001
             logger.warning("问答缓存写入失败: %s", exc)
         try:
