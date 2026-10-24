@@ -225,23 +225,29 @@ def reset_intent_client() -> None:
     _build_intent_client.cache_clear()
 
 
+#: 纯问候语模式：整句只由问候词 + 语气词/标点构成才算 greeting。
+#: 必须整句匹配，不能 startswith 前缀匹配——"请问试用期被辞退有补偿吗"这类
+#: "礼貌前缀 + 真问题"会被误杀成固定话术（test_qa_cache / test_intent_rules
+#: 都认定"请问，"是正常法律问题的前缀）。
+_GREETING_RE = re.compile(
+    r"^(?:你好|您好|嗨|哈喽|hello|hi|hey|在吗|谢谢|多谢)[呀啊哈!！?？。.~～\s]*$",
+    re.IGNORECASE,
+)
+
+
 def _fast_rule_precheck(query: str) -> IntentResult | None:
-    """快速规则前置：常见法律问题关键词直接分类，跳过 LLM 意图识别（~1s）。
+    """快速规则前置：**整句纯问候语**直接路由 greeting，跳过 LLM 意图识别（~1s）。
 
-    匹配上就直接返回 IntentResult，source="fast_rules"；没匹配上返回 None，
-    继续走 LLM 路径。目标：覆盖 80% 高频问题，TTFT 砍 ~1s。
+    匹配上返回 IntentResult(source="fast_rules")；没匹配上返回 None，继续走 LLM 路径。
+    只做问候语短路：法律问题关键词不前置——意图识别结果影响路由判断
+    （hybrid/pure_structured/pure_vector），规则猜测的 intent 与 LLM 实际判断
+    可能不一致，破坏路由逻辑。高频问题的正确省时手段是 Redis 缓存意图结果。
     """
-    import re
-
     q = query.strip()
     if not q:
         return None
 
-    q_lower = q.lower()
-
-    # 1) 问候语 → 直接路由 greeting，不需要后续检索，跳过 LLM 安全
-    greetings = ["你好", "您好", "在吗", "hi", "hello", "嗨", "请问", "谢谢", "多谢"]
-    if any(q_lower.startswith(g.lower()) for g in greetings):
+    if _GREETING_RE.match(q):
         return IntentResult(
             intent="greeting",
             rewrite_type="direct",
@@ -253,11 +259,6 @@ def _fast_rule_precheck(query: str) -> IntentResult | None:
             need_history=False,
             source="fast_rules",
         )
-
-    # 法律问题关键词暂不前置：意图识别结果会影响路由判断（hybrid/pure_structured/pure_vector），
-    # 前置规则返回的"猜测 intent"和 LLM 实际判断可能不一致，破坏路由逻辑。
-    # 后续优化方向：缓存常用问题的意图识别结果（Redis 缓存 recognize_intent 的输出），
-    # 而不是直接猜测 intent。
     return None
 
 

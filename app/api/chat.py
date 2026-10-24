@@ -23,15 +23,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-from starlette.concurrency import iterate_in_threadpool
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.responses import StreamingResponse
 
 from app.api.sessions import get_owned_session
 from app.core.ratelimit import check_rate_limit
 from app.core.security import CurrentUser, TokenError, get_current_user_optional
 from app.core.sse import SSE_HEADERS, SSE_MEDIA_TYPE
-from app.db.mysql import get_db
+from app.db.mysql import session_scope
 from app.generation.stream import AnswerEngine
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -49,16 +48,25 @@ async def chat_stream(
     payload: ChatStreamRequest,
     request: Request,
     user: CurrentUser | None = Depends(get_current_user_optional),
-    db: Session = Depends(get_db),
 ) -> Any:
-    # 会话模式必须登录且会话归属当前用户：否则任何人都能往任意会话里塞消息
+    # 会话模式必须登录且会话归属当前用户：否则任何人都能往任意会话里塞消息。
+    # 校验用短连接完成，SSE 流期间不占 MySQL 连接池连接。
     if payload.session_id:
         if user is None:
             raise TokenError("会话模式需要登录")
-        get_owned_session(db, payload.session_id, user.id)
 
-    # 限流：匿名按 IP 20 次/分，登录按 uid 60 次/分（防 LLM 费用被刷爆）
-    check_rate_limit(request, user_id=user.id if user else None)
+        def _check_session() -> None:
+            with session_scope() as db:
+                get_owned_session(db, payload.session_id, user.id)  # type: ignore[union-attr]
+
+        await run_in_threadpool(_check_session)
+
+    # 限流：匿名按 IP 20 次/分，登录按 uid 60 次/分（防 LLM 费用被刷爆）。
+    # Redis 是同步客户端，必须入线程池——直接调用会在 Redis 抖动时（最坏 5s）
+    # 冻结整个事件循环，殃及所有请求。
+    await run_in_threadpool(
+        check_rate_limit, request, user_id=user.id if user else None
+    )
 
     engine = AnswerEngine()
     frames = engine.stream(

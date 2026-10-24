@@ -41,6 +41,8 @@ def check_rate_limit(
     :param user_id: 登录用户 ID；None 表示匿名，按 IP 限流
     """
     s = settings or get_settings()
+    if not s.rate_limit_enabled:
+        return
     # 身份：登录用 uid，匿名用 IP
     identity = f"uid:{user_id}" if user_id else f"ip:{_client_ip(request)}"
     limit = s.rate_limit_authed if user_id else s.rate_limit_anonymous

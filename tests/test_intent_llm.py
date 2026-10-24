@@ -273,3 +273,54 @@ class TestIntentClient:
         """DashScope/OpenAI 无该参数，留空时不能凭空发送。"""
         client = self._client(monkeypatch, self._settings(llm_thinking=""))
         assert client._thinking == ""
+
+
+class TestFastRulePrecheck:
+    """快速规则前置：只有**整句纯问候语**才短路 greeting。
+
+    回归背景：旧实现用 startswith 匹配且把"请问"放进问候列表，
+    "请问试用期被辞退有补偿吗"会被误路由成固定话术（不检索、不回答）。
+    """
+
+    def test_pure_greeting_short_circuits(self):
+        from app.orchestration.intent import _fast_rule_precheck
+
+        for q in ["你好", "您好", "在吗", "hi", "hello", "嗨", "谢谢", "多谢", "你好！", "在吗？", "hi~~"]:
+            pre = _fast_rule_precheck(q)
+            assert pre is not None, q
+            assert pre.intent == "greeting"
+            assert pre.source == "fast_rules"
+
+    def test_greeting_with_particles_matches(self):
+        from app.orchestration.intent import _fast_rule_precheck
+
+        assert _fast_rule_precheck("你好呀").intent == "greeting"
+        assert _fast_rule_precheck("hello! ").intent == "greeting"
+
+    def test_polite_prefix_real_question_not_greeting(self):
+        """礼貌前缀 + 真问题绝不能被当成问候语（本次回归 bug 的核心场景）。"""
+        from app.orchestration.intent import _fast_rule_precheck
+
+        for q in [
+            "请问试用期被辞退有补偿吗",
+            "请问，试用期最长可以约定多久？",
+            "谢谢解答，那加班费怎么算？",
+            "你好，我想问问离职补偿的事",
+            "在吗？我有个劳动法问题",
+        ]:
+            assert _fast_rule_precheck(q) is None, q
+
+    def test_real_question_with_client_none_goes_llm_path(self):
+        """client=None（生产路径）时，真问题不能被 fast_rules 短路成 greeting。
+
+        离线环境无密钥 → LLM 抛错 → 规则兜底，source 应为 rules 而非 fast_rules，
+        且 intent 由规则判为 labor_law。
+        """
+        result = recognize_intent("请问试用期被辞退有补偿吗")
+        assert result.source != "fast_rules"
+        assert result.intent != "greeting"
+
+    def test_pure_greeting_via_recognize_intent_skips_llm(self):
+        result = recognize_intent("你好")
+        assert result.source == "fast_rules"
+        assert result.intent == "greeting"

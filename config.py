@@ -285,6 +285,10 @@ class Settings(BaseSettings):
     gen_sources_limit: int = Field(default=10, ge=1, le=50)
 
     # ---- 限流（chat 接口，防 LLM 费用被刷爆）----
+    rate_limit_enabled: bool = Field(
+        default=True,
+        description="限流总开关；压测时以 RATE_LIMIT_ENABLED=false 启动服务，否则 30 次/档的压测会被 429 卡死",
+    )
     rate_limit_anonymous: int = Field(default=20, ge=1, le=600, description="匿名用户每分钟最大请求数")
     rate_limit_authed: int = Field(default=60, ge=1, le=1000, description="登录用户每分钟最大请求数")
 
