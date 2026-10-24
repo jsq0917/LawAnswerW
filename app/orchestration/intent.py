@@ -51,7 +51,7 @@ INTENT_SYSTEM_PROMPT = """你是法律问答系统的「意图识别与查询改
 }
 
 判定规则：
-- intent：劳动/劳动合同/工伤/仲裁等 → labor_law；民法典领域（合同、婚姻、继承、侵权、物权、借款、租赁、遗嘱）→ civil_code；跨两部以上或泛法律 → general；纯问候闲聊 → greeting；与法律无关 → other。注意"你能做什么/有哪些功能/你是谁"属能力与身份询问，归 other，不算 greeting。
+- intent：劳动/劳动合同/工伤/仲裁等 → labor_law；民法典领域（合同、婚姻、继承、侵权、物权、借款、租赁、遗嘱）→ civil_code；跨两部以上或泛法律 → general；纯问候寒暄（你好/在吗/谢谢等，不含任何实质问题）→ greeting；**与法律完全无关的生活话题（天气、影视、美食、闲聊）→ other 而非 greeting**。注意"你能做什么/有哪些功能/你是谁"属能力与身份询问，归 other。
 - rewrite_type：
   - direct：问题完整、无指代、单跳；
   - history：含"那/这个/具体/继续/还有呢"等指代，需结合历史补全实体；
@@ -60,7 +60,7 @@ INTENT_SYSTEM_PROMPT = """你是法律问答系统的「意图识别与查询改
   - decompose：含"分别/以及/和…怎么算"且涉及多法条，拆成 2-3 个子查询。
 - sub_queries：把口语改写成法律术语表述，保留关键实体与数字；除 decompose 外通常 1 条；改写结果要能独立读懂。
 - complexity：单点短问 → simple；含条件/多要素 → medium；多问、跨条、含计算 → complex。
-- hit_structured：命中上述 12 个高频话题之一 → true，并给出 topic；否则 false 且 topic 为 null。
+- hit_structured：**仅当问题命中上述 12 个劳动法高频话题之一且用户在问该话题本身的规定/标准/计算时 → true** 并给出 topic。民法典问题（婚姻、继承、物权、租赁等）即使涉及"合同"字样也一律 false——12 个话题全部对齐劳动法问答库，civil 问题没有结构化答案可回放。拿不准 → false。
 - law_hints：从「中华人民共和国劳动合同法、中华人民共和国劳动法、中华人民共和国民法典」中选 1-3 部；greeting/other 输出 []。
 - need_history：是否需要结合对话历史才能理解 → true/false。"""
 
