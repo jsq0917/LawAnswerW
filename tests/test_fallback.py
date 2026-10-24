@@ -195,3 +195,33 @@ class TestHybridContext:
         list(engine.stream(plan.query))
         user_msg = llm.calls[0]["messages"][-1]["content"]
         assert user_msg.index("【结论参考】") < user_msg.index("【法条资料】")
+
+
+class TestRetrievePathPolicy:
+    """检索选路策略：仅 decompose 走多路分检，其余原句单查询。
+
+    依据：P6 消融——多路对多跳 +8.3pt，但同义改写句作第二投票人
+    会稀释锚点排序（单跳 −13.3pt，q04/q15 从满分掉到 0）。
+    """
+
+    def test_direct_rewrite_uses_single_query_even_with_subqueries(self, monkeypatch):
+        intent = make_intent(sub_queries=["改写后的子查询一", "改写后的子查询二"], rewrite_type="direct")
+        plan = make_plan("pure_vector", intent=intent)
+        retrieve = fake_retrieve_fn([make_hit("c1", 0.5, rerank=1.0)])
+        run(monkeypatch, plan, retrieve=retrieve)
+        # direct：只调 1 次且用原句，不按 sub_queries 分检
+        assert len(retrieve.calls) == 1
+        assert retrieve.calls[0]["question"] == plan.query
+
+    def test_decompose_uses_multi_path(self, monkeypatch):
+        intent = make_intent(
+            sub_queries=["经济补偿计算标准", "代通知金规定"],
+            rewrite_type="decompose",
+        )
+        plan = make_plan("pure_vector", intent=intent)
+        retrieve = fake_retrieve_fn([make_hit("c1", 0.5, rerank=1.0)])
+        run(monkeypatch, plan, retrieve=retrieve)
+        # decompose：原句锚点 + 2 条子查询，各检索一路
+        questions = [c["question"] for c in retrieve.calls]
+        assert set(questions) == {plan.query, "经济补偿计算标准", "代通知金规定"}
+        assert len(retrieve.calls) == 3

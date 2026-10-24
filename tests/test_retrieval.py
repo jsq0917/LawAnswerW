@@ -385,3 +385,72 @@ class TestRetrieveMulti:
             expand_parent=False,
         )
         assert len({h.parent_id for h in res.hits}) == len(res.hits)
+
+
+# ---------------------------------------------------------------------------
+# 法域过滤低置信回退：law_hints 判错法域时不能把正确法条整条筛掉
+# ---------------------------------------------------------------------------
+class FilterAwareMilvus:
+    """按过滤表达式返回不同候选：带 law_name 过滤返回弱相关行，否则返回强相关行。"""
+
+    def __init__(self, filtered_rows, unfiltered_rows):
+        self.filtered_rows = filtered_rows
+        self.unfiltered_rows = unfiltered_rows
+        self.exprs: list[str] = []
+
+    def hybrid_search(self, *, reqs, **kw):
+        expr = reqs[0].expr or ""
+        self.exprs.append(expr)
+        rows = self.filtered_rows if "law_name" in expr else self.unfiltered_rows
+        return [[{"entity": r, "distance": 0.5 - i * 0.01} for i, r in enumerate(rows)]]
+
+
+class TestLawFilterRescue:
+    QUERY = "老板让我加班一天最多几小时"
+
+    def _weak_row(self):
+        # 与 query 几乎无字面重合（DummyReranker 按字符重合打分 → 低分）
+        return _entity("w1", "pw", "诉讼时效中断中止的制度规定", law="中华人民共和国劳动合同法")
+
+    def _strong_row(self):
+        return _entity("s1", "ps", "加班时间每日不得超过一小时的小时上限",
+                       law="中华人民共和国劳动法", article="第四十一条")
+
+    def test_rescue_triggers_on_low_confidence(self, settings_factory):
+        client = FilterAwareMilvus([self._weak_row()], [self._strong_row()])
+        res = retrieve(
+            self.QUERY, complexity="simple",
+            law_hints=["中华人民共和国劳动合同法"],
+            embedder=DummyEmbedder(), reranker=DummyReranker(), client=client,
+            expand_parent=False,
+            settings=settings_factory(retrieval_law_filter=True, retrieval_law_rescue_score=0.5),
+        )
+        # 两次检索：带法域过滤 + 回退的无过滤
+        assert len(client.exprs) == 2
+        assert "law_name" in client.exprs[0] and "law_name" not in client.exprs[1]
+        # 回退把被错误过滤掉的劳动法第四十一条救了回来
+        assert res.hits[0].law_article == "中华人民共和国劳动法#第四十一条"
+
+    def test_no_rescue_when_confident(self, settings_factory):
+        strong = _entity("s1", "ps", "老板让我加班一天最多几小时的上限规定",
+                         law="中华人民共和国劳动合同法")
+        client = FilterAwareMilvus([strong], [self._weak_row()])
+        res = retrieve(
+            self.QUERY, complexity="simple",
+            law_hints=["中华人民共和国劳动合同法"],
+            embedder=DummyEmbedder(), reranker=DummyReranker(), client=client,
+            expand_parent=False,
+            settings=settings_factory(retrieval_law_filter=True, retrieval_law_rescue_score=0.5),
+        )
+        assert len(client.exprs) == 1  # top1 高置信，不触发回退
+
+    def test_rescue_disabled_by_zero(self, settings_factory):
+        client = FilterAwareMilvus([self._weak_row()], [self._strong_row()])
+        retrieve(
+            self.QUERY, complexity="simple",
+            law_hints=["中华人民共和国劳动合同法"],
+            embedder=DummyEmbedder(), reranker=DummyReranker(), client=client,
+            expand_parent=False,
+            settings=settings_factory(retrieval_law_filter=True, retrieval_law_rescue_score=0.0),
+        )
+        assert len(client.exprs) == 1

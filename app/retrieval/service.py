@@ -94,6 +94,46 @@ def retrieve(
         candidates.sort(key=lambda h: h.rerank_score if h.rerank_score is not None else h.score, reverse=True)
         reranked = True
 
+        # 法域过滤低置信回退：top1 重排分过低 → 意图大概率判错法域，正确法条
+        # 被硬过滤整条筛掉（law_hints 质量随意图模型波动）。无过滤重查一次，
+        # 同一 query 的重排分可比，按法条合并保留高分。仅在失败场景多一次检索。
+        top1 = hybrid._rank_value(candidates[0]) if candidates else 0.0
+        if (
+            hints
+            and s.retrieval_law_rescue_score > 0
+            and top1 < s.retrieval_law_rescue_score
+        ):
+            rescue = hybrid.search(
+                client,
+                collection,
+                embedding,
+                pool=pool,
+                kb_ids=kb_ids,
+                mode=mode,
+                rrf_k=s.retrieval.rrf_k,
+                ranker=s.retrieval_ranker,
+                dense_weight=s.retrieval.dense_weight,
+                sparse_weight=s.retrieval.sparse_weight,
+                law_hints=None,
+                sparse_pool_ratio=getattr(s, "retrieval_sparse_pool_ratio", 1.0),
+            )
+            if rescue:
+                rescue = hybrid.dedupe_by_parent(rescue, topk=len(rescue))
+                for hit, score in zip(
+                    rescue, reranker.score(question, [c.embed_text for c in rescue])
+                ):
+                    hit.rerank_score = score
+                by_parent: dict[str, Hit] = {}
+                for hit in list(candidates) + rescue:
+                    key = hit.parent_id or hit.chunk_id
+                    if key not in by_parent or hybrid._rank_value(hit) > hybrid._rank_value(by_parent[key]):
+                        by_parent[key] = hit
+                candidates = sorted(by_parent.values(), key=hybrid._rank_value, reverse=True)
+            logger.info(
+                "法域过滤低置信回退：top1 重排分 %.3f < %.2f，无过滤重查合并 → %d 条候选",
+                top1, s.retrieval_law_rescue_score, len(candidates),
+            )
+
     hits = hybrid.dedupe_by_parent(candidates, topk=resolved_topk)
     if expand_parent and hits:
         _attach_parents(hits)

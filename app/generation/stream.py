@@ -257,25 +257,39 @@ class AnswerEngine:
     # 内部步骤
     # ------------------------------------------------------------------
     def _retrieve(self, plan: QueryPlan, settings: Settings) -> tuple[list, str | None]:
-        """多子查询检索（并行分检 → 按法条合并去重 → 全局截断）。
+        """检索：按意图改写类型选路。
 
-        具体逻辑在 ``retrieval.service.retrieve_multi``——生产链路与
-        recall_eval 共用同一实现，保证"评测口径 = 线上链路"。
+        - ``rewrite_type == "decompose"``（多跳拆解）→ ``retrieve_multi`` 并行
+          分检 + 名次交错融合（评测证实：多跳 +8.3pt，P6 组）；
+        - 其余（direct/hyde/simplify 的 sub_queries 只是**同义改写**，不是拆解）
+          → 原句单查询直检（评测证实：改写句作第二投票人反而稀释锚点排序，
+          单跳 −13.3pt，故不用）。
+
         Milvus/检索异常 → 第 5 层容错：空列表 + degraded 标记，
         由调用方决定降级回答还是引导话术。
         """
         from app.retrieval.service import retrieve, retrieve_multi
 
         try:
-            res = retrieve_multi(
-                plan.sub_queries or [plan.query],
-                kb_ids=list(plan.route.kb_ids) or None,
-                complexity=plan.intent.complexity,
-                law_hints=list(plan.intent.law_hints) or None,
-                anchor_query=plan.query,
-                settings=settings,
-                retrieve_fn=self._retrieve_fn or retrieve,
-            )
+            use_multi = plan.intent.rewrite_type == "decompose" and len(plan.sub_queries or []) > 1
+            if use_multi:
+                res = retrieve_multi(
+                    plan.sub_queries,
+                    kb_ids=list(plan.route.kb_ids) or None,
+                    complexity=plan.intent.complexity,
+                    law_hints=list(plan.intent.law_hints) or None,
+                    anchor_query=plan.query,
+                    settings=settings,
+                    retrieve_fn=self._retrieve_fn or retrieve,
+                )
+            else:
+                res = (self._retrieve_fn or retrieve)(
+                    plan.query,
+                    kb_ids=list(plan.route.kb_ids) or None,
+                    complexity=plan.intent.complexity,
+                    law_hints=list(plan.intent.law_hints) or None,
+                    settings=settings,
+                )
             return res.hits, None
         except Exception as exc:  # noqa: BLE001 - 检索故障降级，不打断链路
             logger.warning("检索失败，降级处理（%s: %s）", type(exc).__name__, str(exc)[:200])

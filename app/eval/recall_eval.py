@@ -188,26 +188,44 @@ def run_group(
         law_hints = (hints or {}).get(case["id"]) or None if cfg["law_filter"] else None
         started = time.perf_counter()
         if cfg.get("pipeline"):
-            # 生产真实链路：真实意图的 decompose 子查询 → retrieve_multi 并行分检
+            # 生产真实链路（与 AnswerEngine._retrieve 同策略）：
+            # 仅 rewrite_type=decompose 走多路分检，其余原句单查询直检——
+            # 消融证实：多路对多跳 +8.3pt，但同义改写句作第二投票人会稀释
+            # 锚点排序，单跳 −13.3pt（见 recall.json P6 组分题型数据）。
             pipe = (pipeline_intents or {}).get(case["id"]) or {}
             subs = pipe.get("sub_queries") or [case["question"]]
+            rewrite_type = pipe.get("rewrite_type") or "direct"
             law_hints = pipe.get("law_hints") or None if cfg["law_filter"] else None
-            fn = partial(
-                retrieve,
-                embedder=embedder,
-                reranker=reranker if cfg["use_rerank"] else None,
-                expand_parent=cfg["expand_parent"],
-            )
-            result = retrieve_multi(
-                subs,
-                kb_ids=case.get("kb_ids") or None,
-                complexity=pipe.get("complexity") or "medium",
-                topk=TOP_K,
-                law_hints=law_hints,
-                anchor_query=case["question"],
-                settings=settings,
-                retrieve_fn=fn,
-            )
+            if rewrite_type == "decompose" and len(subs) > 1:
+                fn = partial(
+                    retrieve,
+                    embedder=embedder,
+                    reranker=reranker if cfg["use_rerank"] else None,
+                    expand_parent=cfg["expand_parent"],
+                )
+                result = retrieve_multi(
+                    subs,
+                    kb_ids=case.get("kb_ids") or None,
+                    complexity=pipe.get("complexity") or "medium",
+                    topk=TOP_K,
+                    law_hints=law_hints,
+                    anchor_query=case["question"],
+                    settings=settings,
+                    retrieve_fn=fn,
+                )
+            else:
+                result = retrieve(
+                    case["question"],
+                    kb_ids=case.get("kb_ids") or None,
+                    topk=TOP_K,
+                    mode=cfg["mode"],
+                    use_rerank=cfg["use_rerank"],
+                    expand_parent=cfg["expand_parent"],
+                    law_hints=law_hints,
+                    embedder=embedder,
+                    reranker=reranker if cfg["use_rerank"] else None,
+                    settings=settings,
+                )
         else:
             result = retrieve(
                 case["question"],

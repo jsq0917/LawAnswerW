@@ -212,9 +212,22 @@ class TestEventOrder:
         assert sources[0]["kind"] == "law"
 
     def test_retrieval_uses_sub_queries_and_kbs(self, monkeypatch):
-        plan = make_plan("pure_vector", intent=make_intent(sub_queries=["试用期最长多久", "劳动合同法 试用期 六个月"]))
+        """decompose 意图走多路分检（原句锚点 + 子查询），并带 kb 过滤。
+
+        选路策略：仅 rewrite_type=decompose 走多路（direct 等同义改写
+        不拆，见 TestRetrievePathPolicy）；本用例意图默认 direct，
+        显式指定 decompose 覆盖多路分支。
+        """
+        intent = make_intent(
+            sub_queries=["试用期最长多久", "劳动合同法 试用期 六个月"],
+            rewrite_type="decompose",
+        )
+        plan = make_plan("pure_vector", intent=intent)
         _, _, retrieve, _ = run_engine(monkeypatch, plan, retrieve=fake_retrieve_fn([make_hit("c1", 0.5, rerank=1.0)]))
-        assert [c["question"] for c in retrieve.calls] == ["试用期最长多久", "劳动合同法 试用期 六个月"]
+        # 原句已在子查询列表里（第 1 条），不会重复加锚点
+        assert {c["question"] for c in retrieve.calls} == {
+            "试用期最长多久", "劳动合同法 试用期 六个月",
+        }
         assert all(c["kb_ids"] == ["kb_labor"] for c in retrieve.calls)
 
 
