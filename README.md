@@ -1,6 +1,6 @@
 # LawAnswer
 
-面向中国法律条文的 **多路 RAG 问答系统**：把《劳动合同法》《劳动法》《民法典》按"编→章→节→条→款"结构化切块，用 bge-m3 的稠密 + 稀疏双向量存入 Milvus，配合 MySQL 高频问答对与 Redis 热缓存做双源路由，经 RRF 融合与 bge-reranker-v2-m3 重排后，由可切换的大模型（默认 DeepSeek `deepseek-flash`）**流式**生成带法条引用的回答。
+面向中国法律条文的 **多路 RAG 问答系统**：把《劳动合同法》《劳动法》《民法典》按"编→章→节→条→款"结构化切块，用 bge-m3 的稠密 + 稀疏双向量存入 Milvus，配合 MySQL 高频问答对与 Redis 热缓存做双源路由，经 RRF 融合与 bge-reranker-v2-m3 重排后，由可切换的大模型（默认 通义千问 `qwen-max`）**流式**生成带法条引用的回答。
 
 > 当前进度：**8 个阶段全部完成** —— 解析入库、混合检索、意图路由、流式生成、前端 6 页、评估闭环已验收；
 > 阶段 8 交付物已就位：`scripts/bootstrap.ps1`（一键跑通，实测 65.5s）、`scripts/demo.py`（10 问覆盖 6 路由，10/10 通过）、
@@ -17,7 +17,7 @@
 | 存储 | MySQL 8（用户/会话/高频问答）、Milvus 2.4（向量）、Redis 7（缓存）、MinIO（原文件，可选） |
 | Embedding | bge-m3（稠密 1024 + 稀疏） |
 | Rerank | bge-reranker-v2-m3 |
-| LLM | 可切换（OpenAI 兼容）：DeepSeek `deepseek-flash`（默认）/ 通义千问 `qwen-max`（DashScope） |
+| LLM | 可切换（OpenAI 兼容）：通义千问 `qwen-max`（DashScope，当前默认）/ DeepSeek `deepseek-flash` |
 | 评估 | ragas 0.3.0（独立依赖组） |
 | 前端 | Vue 3.5 + Vite 7 + TypeScript + Pinia + Vue Router + Element Plus |
 
@@ -36,7 +36,7 @@ flowchart TB
     MI[("Milvus 19531<br/>law_chunks partition=kb_id")]
     RD[("Redis 6380<br/>QA 缓存 / 幂等")]
     MO[("MinIO 9002<br/>原文件")]
-    LLM["LLM（OpenAI 兼容）<br/>DeepSeek deepseek-flash"]
+    LLM["LLM（OpenAI 兼容）<br/>qwen-max（DashScope）"]
 
     UI -->|"/api 代理 + SSE"| API
     API --> ORCH
@@ -194,8 +194,8 @@ curl -X POST http://127.0.0.1:8101/api/intent/preview \
 
 | 厂商 | LLM_BASE_URL | LLM_DEFAULT_MODEL | 密钥环境变量 |
 |---|---|---|---|
-| DeepSeek（当前默认） | `https://api.deepseek.com` | `deepseek-flash`（或 `deepseek-v4-pro`） | `DEEPSEEK_API_KEY` |
-| 阿里云百炼 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-max` | `DASHSCOPE_API_KEY` |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-flash`（或 `deepseek-v4-pro`） | `DEEPSEEK_API_KEY` |
+| 阿里云百炼（当前默认） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-max` | `LLM_API_KEY` / `DASHSCOPE_API_KEY` |
 | 任意兼容服务 | 服务商地址 | 服务商模型名 | `LLM_API_KEY`（优先级最高） |
 
 DeepSeek 需额外设 `LLM_THINKING=disabled`：官方**默认开启思考模式**，而思考模式下
