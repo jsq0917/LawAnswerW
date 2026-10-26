@@ -1,33 +1,34 @@
 {
-  "generated_at": "2026-10-24T10:59:51+0800",
+  "generated_at": "2026-10-26T08:36:15+0800",
   "levels": [
     {
       "concurrency": 1,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 83.92,
-      "qps": 0.357,
+      "wall_seconds": 85.05,
+      "qps": 0.353,
       "success": 30,
       "failed": 0,
       "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 1903.5,
-        "p50": 2145,
-        "p95": 3172,
-        "p99": 3687,
-        "max": 3687
+        "mean": 1721.5,
+        "p50": 1807,
+        "p95": 3049,
+        "p99": 3919,
+        "max": 3919
       },
       "latency_ms": {
-        "mean": 2796.7,
-        "p50": 2919,
-        "p95": 5736,
-        "p99": 5755,
-        "max": 5755
+        "mean": 2834.5,
+        "p50": 2830,
+        "p95": 5655,
+        "p99": 5724,
+        "max": 5724
       },
-      "tokens_per_s_mean": 43.58,
+      "tokens_per_s_mean": 72.44,
       "routes": {
         "pure_structured": 6,
-        "hybrid": 21,
+        "hybrid": 12,
+        "pure_vector": 9,
         "greeting": 3
       },
       "errors": []
@@ -36,29 +37,30 @@
       "concurrency": 5,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 17.42,
-      "qps": 1.722,
+      "wall_seconds": 17.06,
+      "qps": 1.758,
       "success": 30,
       "failed": 0,
       "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 1870.6,
-        "p50": 2173,
-        "p95": 3130,
-        "p99": 4010,
-        "max": 4010
+        "mean": 1311.1,
+        "p50": 1386,
+        "p95": 2445,
+        "p99": 2509,
+        "max": 2509
       },
       "latency_ms": {
-        "mean": 2741.0,
-        "p50": 2821,
-        "p95": 5955,
-        "p99": 6343,
-        "max": 6343
+        "mean": 2557.8,
+        "p50": 2637,
+        "p95": 5535,
+        "p99": 6196,
+        "max": 6196
       },
-      "tokens_per_s_mean": 46.93,
+      "tokens_per_s_mean": 86.14,
       "routes": {
-        "pure_structured": 8,
-        "hybrid": 19,
+        "pure_structured": 6,
+        "hybrid": 12,
+        "pure_vector": 9,
         "greeting": 3
       },
       "errors": []
@@ -67,32 +69,31 @@
       "concurrency": 10,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 13.8,
-      "qps": 2.174,
+      "wall_seconds": 10.52,
+      "qps": 2.852,
       "success": 30,
       "failed": 0,
       "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 2787.5,
-        "p50": 3016,
-        "p95": 4599,
-        "p99": 5012,
-        "max": 5012
+        "mean": 1582.6,
+        "p50": 1687,
+        "p95": 3737,
+        "p99": 3892,
+        "max": 3892
       },
       "latency_ms": {
-        "mean": 3657.5,
-        "p50": 3941,
-        "p95": 7061,
-        "p99": 7616,
-        "max": 7616
+        "mean": 2722.0,
+        "p50": 3214,
+        "p95": 5587,
+        "p99": 5912,
+        "max": 5912
       },
-      "tokens_per_s_mean": 32.16,
+      "tokens_per_s_mean": 79.44,
       "routes": {
-        "pure_structured": 5,
-        "hybrid": 21,
-        "pure_vector": 1,
-        "no_data": 1,
-        "greeting": 2
+        "pure_structured": 8,
+        "hybrid": 10,
+        "pure_vector": 9,
+        "greeting": 3
       },
       "errors": []
     },
@@ -100,29 +101,30 @@
       "concurrency": 20,
       "requests": 30,
       "planned_requests": 30,
-      "wall_seconds": 12.01,
-      "qps": 2.498,
+      "wall_seconds": 11.1,
+      "qps": 2.702,
       "success": 30,
       "failed": 0,
       "error_rate": 0.0,
       "ttft_ms": {
-        "mean": 4963.8,
-        "p50": 5405,
-        "p95": 9177,
-        "p99": 9477,
-        "max": 9477
+        "mean": 4090.1,
+        "p50": 4471,
+        "p95": 7486,
+        "p99": 7620,
+        "max": 7620
       },
       "latency_ms": {
-        "mean": 5886.0,
-        "p50": 6935,
-        "p95": 10866,
-        "p99": 12008,
-        "max": 12008
+        "mean": 5153.4,
+        "p50": 5644,
+        "p95": 9213,
+        "p99": 9387,
+        "max": 9387
       },
-      "tokens_per_s_mean": 24.5,
+      "tokens_per_s_mean": 45.14,
       "routes": {
-        "pure_structured": 7,
-        "hybrid": 20,
+        "pure_structured": 4,
+        "hybrid": 14,
+        "pure_vector": 9,
         "greeting": 3
       },
       "errors": []

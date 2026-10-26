@@ -2,29 +2,30 @@
   "concurrency": 20,
   "requests": 30,
   "planned_requests": 30,
-  "wall_seconds": 12.01,
-  "qps": 2.498,
+  "wall_seconds": 11.1,
+  "qps": 2.702,
   "success": 30,
   "failed": 0,
   "error_rate": 0.0,
   "ttft_ms": {
-    "mean": 4963.8,
-    "p50": 5405,
-    "p95": 9177,
-    "p99": 9477,
-    "max": 9477
+    "mean": 4090.1,
+    "p50": 4471,
+    "p95": 7486,
+    "p99": 7620,
+    "max": 7620
   },
   "latency_ms": {
-    "mean": 5886.0,
-    "p50": 6935,
-    "p95": 10866,
-    "p99": 12008,
-    "max": 12008
+    "mean": 5153.4,
+    "p50": 5644,
+    "p95": 9213,
+    "p99": 9387,
+    "max": 9387
   },
-  "tokens_per_s_mean": 24.5,
+  "tokens_per_s_mean": 45.14,
   "routes": {
-    "pure_structured": 7,
-    "hybrid": 20,
+    "pure_structured": 4,
+    "hybrid": 14,
+    "pure_vector": 9,
     "greeting": 3
   },
   "errors": []
