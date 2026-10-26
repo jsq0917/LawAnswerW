@@ -1,0 +1,87 @@
+# ============================================================================
+# LawAnswer 服务器端 docker-compose 覆盖文件（内存/磁盘受限 + 安全隔离）
+#
+# 用法（在 /opt/lawanswer 下）：
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.server.yml up -d
+#
+# 本文件做三件事：
+#   1) 所有端口显式绑定 127.0.0.1 —— 绝不把 MySQL/Redis/Milvus 暴露到公网
+#   2) 用 mem_limit 限制各容器内存上限（单机 compose 直接生效）
+#   3) 压缩 MySQL / Redis 的内存参数
+#
+# 验证限制是否真的生效（MEM USAGE / LIMIT 列右值应为你设的上限而非整机内存）：
+#   docker stats --no-stream
+#   docker inspect --format '{{.HostConfig.Memory}}' lawanswer-milvus   # 字节数，0 表示未设
+#
+# ⚠️ 前置事实：即使按下面压到极限，Milvus(standalone)+etcd+MinIO 稳定运行
+#    仍需约 2.0-2.5G 内存并再加 FastAPI 进程与两个本地模型（各约 2.3G）。
+#    本文件只能「减少浪费」，不能把 2G 变成够用。
+#    内存账与三条可选路线见 docs/部署方案-阿里云ECS.md §0。
+#
+# 关于 Milvus 调优的重要说明：
+#   Milvus 绝大多数配置项**只能通过挂载 milvus.yaml 覆盖**，环境变量仅支持
+#   少数几项（ETCD_ENDPOINTS / MINIO_ADDRESS 等，即官方 compose 模板里的那些）。
+#   因此这里不再伪造段大小、queryNode 内存之类的「环境变量」，如需深度调优，
+#   请按官方文档挂载配置：https://milvus.io/docs/configure-docker.md
+#   本项目向量总量仅约 1465 条，Milvus 默认配置在该数据量下内存开销可控。
+# ============================================================================
+name: lawanswer
+
+services:
+  mysql:
+    # 只监听本机，公网无法直连
+    ports:
+      - "127.0.0.1:3307:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00
+      - --ngram_token_size=2
+      # 2 核机器把连接数压下来（默认 151，本项目实际用不到 20）
+      - --max_connections=60
+      # InnoDB 缓冲池：本项目数据量仅几 MB，128M 足够
+      - --innodb-buffer-pool-size=128M
+      # 关掉 performance_schema：省内存，且本项目不需要它做性能剖析
+      - --performance-schema=OFF
+    mem_limit: 700m
+    mem_reservation: 256m
+
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      # 上限收紧：本项目缓存只有意图结果与高频问答，量很小
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - allkeys-lru
+    mem_limit: 300m
+    mem_reservation: 128m
+
+  etcd:
+    mem_limit: 300m
+    mem_reservation: 128m
+
+  minio:
+    ports:
+      - "127.0.0.1:9002:9000"
+      - "127.0.0.1:9003:9001"
+    mem_limit: 300m
+    mem_reservation: 128m
+
+  milvus:
+    ports:
+      - "127.0.0.1:19531:19530"
+      - "127.0.0.1:9092:9091"
+    # 环境变量只保留官方 compose 模板认可的三项，不伪造调优参数
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    # Milvus standalone 冷启动 + 段加载有内存峰值，给到 2G
+    mem_limit: 2g
+    mem_reservation: 768m

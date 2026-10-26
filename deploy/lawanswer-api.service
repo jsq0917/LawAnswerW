@@ -1,0 +1,55 @@
+# ============================================================================
+# LawAnswer 后端 systemd 单元
+# 放置位置：/etc/systemd/system/lawanswer-api.service
+#
+# 启用：
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now lawanswer-api
+#   sudo systemctl status lawanswer-api
+#
+# 【为什么不用 uv run】
+# systemd 里直接调用 venv 内的 python 可执行文件，避免 uv 每次启动前的
+# 环境解析与自动同步（服务器上无 GPU，若 uv 自动 sync 还可能触发耗时操作）。
+# 依赖安装与 venv 创建由部署阶段一次性完成。
+# ============================================================================
+
+[Unit]
+Description=LawAnswer FastAPI service (SSE RAG)
+Documentation=file:/opt/lawanswer/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+# 基础设施是 docker compose 起的，服务依赖它
+Requires=docker.service
+
+[Service]
+Type=simple
+User=lawanswer
+Group=lawanswer
+WorkingDirectory=/opt/lawanswer
+
+# 单一配置源：生产环境全部变量（含 LLM 密钥）都放这里，权限 600。
+# 注意：不要放到项目根目录的 .env —— 应用启动自检会拒绝 .env 中的密钥。
+EnvironmentFile=/etc/lawanswer/lawanswer.env
+
+# 直接用 venv 内的解释器，不走 uv run
+ExecStart=/opt/lawanswer/.venv/bin/python -m app.server
+
+# 崩溃自动重启；给 Milvus/MySQL 冷启动留出重试间隔
+Restart=always
+RestartSec=5
+
+# 日志走 journald（journalctl -u lawanswer-api -f）。
+# 应用自身也会写 logs/app.log + logs/error.log（已配置轮转）。
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lawanswer-api
+
+# 2G 小内存机器上降低被 OOM Killer 优先杀掉的概率（数值越低越不容易被杀）
+OOMScoreAdjust=-500
+LimitNOFILE=65535
+
+# 嵌入式模型加载会占用较多内存，放宽启动时限
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
