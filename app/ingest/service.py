@@ -14,12 +14,13 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.errors import UpstreamError
 from app.core.logger import get_logger
 from app.ingest.embedder import get_embedder
 from app.ingest.loaders import SUPPORTED_EXT, UnsupportedDocumentError
 from app.ingest.pipeline import ingest, new_id, prepare
 from app.ingest.writer import chunk_to_entity, delete_chunk_vector, refresh_kb_counts, update_document_status
-from app.ingest.writer import delete_document_vectors, upsert_vectors
+from app.ingest.writer import delete_chunk_vectors, delete_document_vectors, upsert_vectors
 from config import get_settings
 
 logger = get_logger("lawanswer.ingest")
@@ -29,6 +30,10 @@ MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 
 class UploadRejected(ValueError):
     """上传校验失败（前端可直接展示 message）。"""
+
+
+class KbBusyError(RuntimeError):
+    """知识库还有文档在解析中，暂时不能删（后台任务会把行写回来）。"""
 
 
 def validate_upload(filename: str, size: int, chunk_size: int, overlap: int) -> None:
@@ -228,6 +233,99 @@ def delete_document(session: Session, doc_id: str) -> None:
     delete_document_vectors(get_milvus_db_client(), settings.milvus_collection, doc_id)
     session.execute(text("DELETE FROM documents WHERE id = :id"), {"id": doc_id})
     refresh_kb_counts(session, row["kb_id"])
+
+
+def delete_knowledge_base(session: Session, kb_id: str) -> dict:
+    """删除整个知识库（文档、块、向量一起走），返回删除前的统计量。
+
+    顺序有讲究：
+
+    * **先删 Milvus 再删 MySQL**。MySQL 是事实源，向量只是派生物；反过来先删库行，
+      一旦 Milvus 失败就会留下一批"检索得到、预览看不到"的孤儿向量，只能人工清。
+    * documents / document_chunks / ingest_jobs 靠外键 ON DELETE CASCADE 跟着走，
+      这里不再逐表 DELETE（逐表删反而容易漏掉 ingest_jobs）。
+    * ``qa_pairs.kb_id`` 没有外键约束，必须手动置空，否则结构化检索会指向不存在的库。
+    * 解析中的库直接拒绝：后台任务结束时会把状态写回 documents，行已经没了就会报错
+      并留下一条 failed 任务，用户看到的是"删了还在解析"。
+    * 源文件不在这里删——调用方提交事务成功后再调 :func:`purge_kb_files`，
+      避免"文件删了、事务回滚了"这种不可逆的空档。
+    """
+    kb = session.execute(
+        text("SELECT id, name, doc_count, chunk_count FROM knowledge_bases WHERE id = :id"),
+        {"id": kb_id},
+    ).mappings().first()
+    if kb is None:
+        raise LookupError(f"知识库 {kb_id} 不存在")
+
+    busy = session.execute(
+        text(
+            "SELECT COUNT(*) FROM documents WHERE kb_id = :kb_id "
+            "AND status IN ('pending','parsing','chunking','embedding')"
+        ),
+        {"kb_id": kb_id},
+    ).scalar()
+    if busy:
+        raise KbBusyError(
+            f"该知识库还有 {int(busy)} 个文档正在解析，请等解析结束或先删除这些文档"
+        )
+
+    chunk_ids = [
+        row[0]
+        for row in session.execute(
+            text("SELECT id FROM document_chunks WHERE kb_id = :kb_id"), {"kb_id": kb_id}
+        ).fetchall()
+    ]
+
+    settings = get_settings()
+    from app.db.milvus_client import get_milvus_db_client
+
+    deleted_vectors = 0
+    if chunk_ids:
+        try:
+            deleted_vectors = delete_chunk_vectors(
+                get_milvus_db_client(), settings.milvus_collection, chunk_ids
+            )
+        except Exception as exc:  # noqa: BLE001 - 向量库故障要让用户看懂，而不是 500
+            logger.exception("删除知识库向量失败 id=%s", kb_id)
+            # 此时 MySQL 一行都没动，库还是完整的，用户重试即可
+            raise UpstreamError("向量库删除失败，知识库未删除，请稍后重试") from exc
+
+    session.execute(
+        text("UPDATE qa_pairs SET kb_id = NULL WHERE kb_id = :kb_id"), {"kb_id": kb_id}
+    )
+    session.execute(text("DELETE FROM knowledge_bases WHERE id = :id"), {"id": kb_id})
+
+    logger.info(
+        "知识库已删除 id=%s 名称=%s 文档=%s 块=%s 向量=%d",
+        kb_id,
+        kb["name"],
+        kb["doc_count"],
+        kb["chunk_count"],
+        deleted_vectors,
+    )
+    return {
+        "deleted": kb_id,
+        "name": kb["name"],
+        "doc_count": int(kb["doc_count"] or 0),
+        "chunk_count": int(kb["chunk_count"] or 0),
+        "chunk_vectors": deleted_vectors,
+    }
+
+
+def purge_kb_files(kb_id: str) -> int:
+    """删掉该库的上传源文件目录，返回删掉的文件数（库已删干净后才调用）。
+
+    只允许删 ``upload_path`` 的**直接子目录**：kb_id 来自 URL，若被构造成
+    ``..`` 或 ``a/b``，不做校验就可能顺手删掉整个上传目录。
+    """
+    root = get_settings().upload_path.resolve()
+    target = (root / kb_id).resolve()
+    if target.parent != root or not target.is_dir():
+        return 0
+    removed = sum(1 for p in target.rglob("*") if p.is_file())
+    shutil.rmtree(target, ignore_errors=True)
+    logger.info("已清理知识库源文件 id=%s 文件数=%d", kb_id, removed)
+    return removed
 
 
 def _law_name_of(session: Session, doc_id: str) -> str:

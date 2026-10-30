@@ -4,7 +4,7 @@
  * （AbortController），EventSource 三者都不支持（设计方案 §4.3）。
  * 这里用 fetch + ReadableStream 手动按 "\n\n" 切帧并解析 event/data。
  */
-import {TOKEN_KEY, ApiError, ApiErrorBody} from './http'
+import {TOKEN_KEY, ApiError, ApiErrorBody, http} from './http'
 import type {SourceRef} from './sessions'
 
 export interface ChatMeta {
@@ -44,6 +44,22 @@ export interface StreamPayload {
   history?: Array<{role: string; content: string}>
   kb_ids?: string[] | null
   session_id?: string | null
+}
+
+export interface SuggestionsPayload {
+  query: string
+  answer: string
+  law_names?: string[]
+}
+
+/** 追问预测：一次问答结束后，让模型猜用户接下来最可能问的 3 个问题。
+ *
+ * 刻意**不在 SSE 流里**做：预测慢几秒不能拖住 done 事件（否则输入框一直被锁着），
+ * 且失败只返回空数组，前端不展示推荐区即可，属于纯加分项。
+ */
+export async function fetchSuggestions(payload: SuggestionsPayload): Promise<string[]> {
+  const {data} = await http.post<{suggestions: string[]}>('/chat/suggestions', payload)
+  return Array.isArray(data?.suggestions) ? data.suggestions : []
 }
 
 function parseFrame(raw: string): SSEEvent | null {

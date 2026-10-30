@@ -8,8 +8,9 @@
 存储与生命周期：
 * ``cap:{captcha_id}`` → 4 位数字，TTL 120s（Redis 过期即失效）；
 * **校验即消费**：无论对错都删除，防止对同一张图暴力试错（错误后前端自动刷新）；
-* Redis 不可用时：生成报 ``UpstreamError``（无法出题），校验**降级放行**并记 warning
-  ——本地开发/演示环境不让“缓存故障”把登录彻底锁死，生产部署时应把该降级关掉（见验收记录遗留）。
+* Redis 不可用时：生成报 ``UpstreamError``（无法出题）；校验按 ``CAPTCHA_FAIL_OPEN``
+  决定——dev 默认放行（本地没起 Redis 也能登录），prod 强制 ``false`` 并抛
+  ``UpstreamError``（缓存一挂就让登录免验证，等于关掉了这道防线）。
 """
 
 from __future__ import annotations
@@ -111,23 +112,37 @@ def new_captcha(*, settings: Settings | None = None) -> tuple[str, str]:
     return captcha_id, uri
 
 
+def _degrade(settings: Settings, why: str) -> bool:
+    """Redis 不可用时的统一降级策略。
+
+    ``CAPTCHA_FAIL_OPEN=true``（dev）→ 放行，避免缓存故障把登录锁死；
+    ``false``（prod 强制）→ 抛 ``UpstreamError``，绝不能因为缓存挂了就让
+    任何人跳过验证码。两侧行为都记日志，方便线上定位。
+    """
+    from app.core.errors import UpstreamError
+
+    if getattr(settings, "captcha_fail_open", True):
+        logger.warning("%s → 降级放行（CAPTCHA_FAIL_OPEN=true）", why)
+        return True
+    logger.error("%s → 拒绝（CAPTCHA_FAIL_OPEN=false）", why)
+    raise UpstreamError("验证码服务暂不可用，请稍后重试")
+
+
 def verify_captcha(captcha_id: str, code: str, *, settings: Settings | None = None) -> bool:
     """校验验证码（**一次性**：校验即删除，防同一张图暴力试错）。
 
-    Redis 不可用时降级放行（记 warning），避免缓存故障把登录彻底锁死。
+    Redis 不可用时的行为由 ``CAPTCHA_FAIL_OPEN`` 决定，见 :func:`_degrade`。
     """
     s = settings or get_settings()
     r = _redis(s)
     if r is None:
-        logger.warning("验证码校验降级放行（Redis 不可用）")
-        return True
+        return _degrade(s, "验证码校验：Redis 不可用")
     key = _KEY_PREFIX + (captcha_id or "")
     try:
         expected = r.get(key)
         r.delete(key)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("验证码校验降级放行（Redis 异常）：%s", str(exc)[:150])
-        return True
+        return _degrade(s, f"验证码校验：Redis 异常 {str(exc)[:120]}")
     if not expected:
         return False
     if isinstance(expected, bytes):

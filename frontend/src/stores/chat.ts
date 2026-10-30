@@ -10,11 +10,23 @@ import {defineStore} from 'pinia'
 
 import * as sessionApi from '@/api/sessions'
 import type {ChatMessage, Session, SessionParams, SourceRef} from '@/api/sessions'
+import {fetchSuggestions} from '@/api/chat'
 import type {ChatMeta, SSEEvent} from '@/api/chat'
 import {errorText} from '@/api/http'
 import {useSSE} from '@/composables/useSSE'
 
 export type ChatStage = 'intent' | 'retrieval' | 'rerank' | 'generate' | ''
+
+/** 界面用消息：在落库字段之外挂「追问预测」结果。
+ *
+ * 追问只存在于内存（不写库）：它是一次性的辅助 UI，刷新后重建成本极低，
+ * 存库反而要加字段、加迁移，收益不匹配。 */
+export interface UiMessage extends ChatMessage {
+  /** 预测出的 3 条追问；为空/缺省时不渲染推荐区 */
+  suggestions?: string[]
+  /** 预测请求进行中（用于「猜你想问」占位） */
+  suggesting?: boolean
+}
 
 interface AssistantDraft {
   content: string
@@ -33,7 +45,7 @@ function emptyDraft(): AssistantDraft {
 export const useChatStore = defineStore('chat', () => {
   const sessions = ref<Session[]>([])
   const currentId = ref<string>('')
-  const messages = ref<ChatMessage[]>([])
+  const messages = ref<UiMessage[]>([])
   const draft = ref<AssistantDraft | null>(null)
   const loadingSessions = ref(false)
   const loadingMessages = ref(false)
@@ -157,6 +169,36 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /** 追问预测：回答落屏后异步取 3 条推荐问题，失败静默（只是锦上添花）。
+   *
+   * 三个细节：
+   * * 取回后必须校验会话没被切走、消息还在数组里，否则会把 A 会话的推荐
+   *   写到 B 会话的界面上（用户切得快时确实会发生）；
+   * * 存的是 **reactive 数组里的那个代理对象**，不是 push 进去的原始对象——
+   *   改原始对象不会触发视图更新；
+   * * 只对本次新生成的回答请求，历史消息不补算（切回旧会话不重复烧 token）。
+   */
+  async function loadSuggestions(message: UiMessage, query: string) {
+    const answer = (message.content || '').trim()
+    if (!answer) return
+    const sid = currentId.value
+    const lawNames = Array.from(
+      new Set((message.sources || []).filter((s) => s.kind === 'law').map((s) => s.law)),
+    ).slice(0, 3)
+
+    message.suggesting = true
+    try {
+      const items = await fetchSuggestions({query, answer, law_names: lawNames})
+      if (currentId.value !== sid) return
+      if (!messages.value.some((m) => m.id === message.id)) return
+      message.suggestions = items
+    } catch {
+      /* 静默失败：推荐位干脆不出现，用户不会察觉 */
+    } finally {
+      message.suggesting = false
+    }
+  }
+
   /** 发送一轮问答：立即插入用户气泡 + 流式草稿，结束转正式消息。 */
   async function send(query: string, kb_override?: string[] | null) {
     const text = query.trim()
@@ -192,6 +234,7 @@ export const useChatStore = defineStore('chat', () => {
       }
     } finally {
       const d = draft.value
+      let created: UiMessage | null = null
       if (d && (d.content || d.error)) {
         messages.value.push({
           id: Date.now() + 1,
@@ -209,13 +252,32 @@ export const useChatStore = defineStore('chat', () => {
           error: d.error,
           created_at: null,
         })
+        // 取回数组里的响应式代理：直接改 push 进去的原始对象不会触发视图更新
+        created = messages.value[messages.value.length - 1] as UiMessage
       }
       draft.value = null
+      if (created && !created.error) void loadSuggestions(created, text)
       // 会话的 updated_at / message_count 变了，静默刷新列表顺序
       sessionApi.listSessions().then((list) => {
         sessions.value = list
       }).catch(() => void 0)
     }
+  }
+
+  /** 重发上一轮：摘掉带错误标记的助手气泡，再把同一个问题发一次。
+   *
+   * 收敛到 store 的原因：视图里直接 `messages.pop()` 会让"消息数组的增删"
+   * 散落在 store 与组件两处，后续任何挂在 push 上的副作用（滚动定位、追问
+   * 预测、会话计数刷新）都容易漏掉一条路径。视图只该说"重试"，不该知道
+   * 消息怎么增删。
+   */
+  async function retryLast(kb_override?: string[] | null) {
+    if (sse.streaming.value) return
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant' && last.error) messages.value.pop()
+    const q = lastQuery.value
+    if (!q) return
+    await send(q, kb_override)
   }
 
   function stop() {
@@ -240,6 +302,7 @@ export const useChatStore = defineStore('chat', () => {
     updateParams,
     removeSession,
     send,
+    retryLast,
     stop,
   }
 })

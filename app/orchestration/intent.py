@@ -3,7 +3,7 @@
 数据流::
 
     query + history
-      → LLM（qwen-max, JSON 模式, 3s 超时, 重试 1 次）
+      → LLM（deepseek-v4.1-flash, JSON 模式, 3s 超时, 重试 1 次）
       → _validate() 字段校正（非法值回落安全默认）
       → IntentResult(source="llm")
       —— 任一环节失败（缺 key/超时/网络/JSON 解析失败）——

@@ -45,7 +45,7 @@ class TestSessionList:
         assert isinstance(item["kb_ids"], list) and item["kb_ids"] == ["kb_labor"]
         assert isinstance(item["temperature"], float)
         assert isinstance(item["history_rounds"], int)
-        assert item["model"] == "qwen-max"
+        assert item["model"] == "deepseek-v4.1-flash"
         assert set(item) >= {
             "id", "title", "kb_ids", "model", "temperature", "top_p",
             "max_tokens", "history_rounds", "message_count", "created_at", "updated_at",

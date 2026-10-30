@@ -256,8 +256,8 @@ class TestDeepSeekQuirks:
         out = list(client.chat_stream([{"role": "user", "content": "hi"}]))
         assert out[-1].usage["total_tokens"] == 12
 
-    def test_defaults_target_deepseek(self):
-        """代码默认值与 .env 保持一致，避免"配置写 qwen、实际打 DeepSeek"。
+    def test_defaults_target_bailian_deepseek(self):
+        """代码默认值与 .env 保持一致，避免"配置写 A、实际打 B"。
 
         注意：uv run 会自动把 .env 注入进程环境，所以这里读**字段默认值**，
         而不是实例值（实例值会被 .env 覆盖，属于另一回事）。
@@ -265,7 +265,7 @@ class TestDeepSeekQuirks:
         from config import Settings
 
         fields = Settings.model_fields
-        assert fields["llm_base_url"].default == "https://api.deepseek.com"
-        assert fields["llm_default_model"].default == "deepseek-flash"
-        # thinking 代码默认留空（只有 DeepSeek 需要，由 .env 显式开启）
-        assert fields["llm_thinking"].default == ""
+        assert fields["llm_base_url"].default == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        assert fields["llm_default_model"].default == "deepseek-v4.1-flash"
+        # 百炼 DeepSeek-V4 系默认开思考，代码默认显式关闭（.env 同样 disabled）
+        assert fields["llm_thinking"].default == "disabled"

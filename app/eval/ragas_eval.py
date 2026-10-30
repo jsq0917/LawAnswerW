@@ -10,7 +10,7 @@
     uv run python -m app.eval.ragas_eval --collect        # 需要服务已启动
     uv run python -m app.eval.ragas_eval                  # 需要 uv sync --group eval
 
-judge 用配置里的大模型（本机为 DeepSeek `deepseek-flash`，设计稿写的是 qwen-max），
+judge 用配置里的大模型（当前为阿里云百炼 `deepseek-v4.1-flash`，设计稿原写 qwen-max），
 embedding 复用本地 bge-m3（与检索同一模型，避免语义空间不一致）。
 """
 

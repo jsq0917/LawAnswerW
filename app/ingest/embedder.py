@@ -38,12 +38,17 @@ class Embedding:
 
 class Embedder(Protocol):
     dim: int
+    #: 是否具备稠密语义能力。无能力的实现（bm25）dense 恒为零向量，
+    #: 余弦相似度没有意义，调用方必须换判据——见 qa_cache 的字面双门。
+    supports_dense: bool
 
     def encode(self, texts: Sequence[str], batch_size: int = 16) -> list[Embedding]: ...
 
 
 class DummyEmbedder:
     """确定性伪向量：同样的文本永远得到同样的向量，便于断言。"""
+
+    supports_dense = True
 
     def __init__(self, dim: int = 1024) -> None:
         self.dim = dim
@@ -70,6 +75,8 @@ class DummyEmbedder:
 
 class BgeM3Embedder:
     """bge-m3 封装（FlagEmbedding.BGEM3FlagModel）。"""
+
+    supports_dense = True
 
     def __init__(
         self,

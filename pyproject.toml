@@ -20,9 +20,9 @@ dependencies = [
     "bcrypt>=4.2.0",
     "pillow>=11.0.0",
     "huggingface-hub>=0.26.0",
-    # torch 默认装 CPU 版；已手工装 GPU 版（2.14.1+cu130）时，
-    # 务必用 `uv sync --no-install-package torch`，否则 uv 会把它换回 CPU 版。
-    "torch>=2.14.1",
+    # 上界锁到 2.14.x：保证 Windows 侧解析到 2.14.1+cu130 时，
+    # Linux/macOS 侧也是同一源码版本的 2.14.1，避免两端 torch 版本分叉。
+    "torch>=2.14.1,<2.15",
     "transformers>=5.20.2",
     "flagembedding>=1.4.2",
     "pymupdf>=2.0",
@@ -64,3 +64,26 @@ markers = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GPU 版 torch：从 PyTorch 官方 cu130 索引取轮子
+# ─────────────────────────────────────────────────────────────────────────────
+# 背景：PyPI（含阿里云 PyPI 镜像）上 Windows 平台的 torch 默认分发 CPU 构建，
+#       `uv add torch` / `pip install torch` 只会得到 `+cpu`，
+#       torch.cuda.is_available() 恒为 False。带 CUDA 的 Windows 轮子只发布在
+#       PyTorch 专用索引上。
+#
+# 用法：`uv lock` → `uv sync`，自动装 GPU 版，不再需要记忆
+#       `uv sync --no-install-package torch` 这类手工旁路（旧做法已废弃）。
+#
+# 跨平台：源用 marker 限定为 Windows，Linux/macOS 解析不受影响。
+#       若 Linux CI 也要 GPU，追加一条 sys_platform == 'linux' 的源即可。
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true   # 只在本文件显式引用时才用，不污染其它包的解析
+
+[tool.uv.sources]
+# 对 torch 的**所有**需求——含 flagembedding / sentence-transformers 的传递依赖——
+# 都走 cu130 索引，避免传递依赖从主索引再解析出一个 CPU 版。
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32'" }]

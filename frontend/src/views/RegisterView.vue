@@ -67,8 +67,16 @@
 
         <div class="field">
           <label class="field__label">验证码</label>
-          <CaptchaField v-model="form.captcha_code" :image="captcha.image" :error="captchaError" @refresh="loadCaptcha"/>
+          <CaptchaField
+            v-model="form.captcha_code"
+            :image="captcha.image.value"
+            :error="captchaError"
+            :retry-in="captcha.retryIn.value"
+            :loading="captcha.loading.value"
+            @refresh="loadCaptcha"
+          />
           <p v-if="captchaError" class="field__error">{{ captchaError }}</p>
+          <p v-else-if="captcha.error.value" class="field__error">{{ captcha.error.value }}</p>
         </div>
 
         <button class="btn btn--block" type="submit" :disabled="!canSubmit || loading">
@@ -84,12 +92,13 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, reactive, ref} from 'vue'
+import {computed, onMounted, reactive, ref, watch} from 'vue'
 import {useRouter} from 'vue-router'
 
 import CaptchaField from '@/components/CaptchaField.vue'
-import {checkUsername, fetchCaptcha} from '@/api/auth'
+import {checkUsername} from '@/api/auth'
 import {ApiError, errorText} from '@/api/http'
+import {useCaptcha} from '@/composables/useCaptcha'
 import {useAuthStore} from '@/stores/auth'
 import {useToast} from '@/composables/useToast'
 
@@ -98,9 +107,17 @@ const auth = useAuthStore()
 const toast = useToast()
 
 const form = reactive({username: '', password: '', confirm: '', captcha_id: '', captcha_code: ''})
-const captcha = reactive({image: ''})
+const captcha = useCaptcha()
 const loading = ref(false)
 const showPw = ref(false)
+
+// 自动重试成功后 id 会变，必须同步回表单，否则提交的是上一张图的 id
+watch(
+  () => captcha.id.value,
+  (v) => {
+    form.captcha_id = v
+  },
+)
 
 const nameError = ref('')
 const nameOk = ref(false)
@@ -120,14 +137,8 @@ const canSubmit = computed(
 
 async function loadCaptcha() {
   form.captcha_code = ''
-  try {
-    const data = await fetchCaptcha()
-    captcha.image = data.image
-    form.captcha_id = data.captcha_id
-  } catch (err) {
-    captcha.image = ''
-    toast.error(errorText(err))
-  }
+  captchaError.value = ''
+  await captcha.reload()
 }
 
 function onNameInput() {

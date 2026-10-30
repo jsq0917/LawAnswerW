@@ -8,7 +8,7 @@
     <label class="params__row">
       <span class="params__label">模型</span>
       <el-select :model-value="model" size="small" style="width: 100%" @update:model-value="onModel">
-        <el-option label="qwen-max（默认）" value="qwen-max"/>
+        <el-option label="deepseek-v4.1-flash（默认）" value="deepseek-v4.1-flash"/>
         <el-option label="qwen-plus" value="qwen-plus"/>
         <el-option label="qwen-turbo" value="qwen-turbo"/>
       </el-select>
@@ -65,7 +65,7 @@ const props = defineProps<{
 const emit = defineEmits<{(e: 'change', patch: SessionParams): void}>()
 
 const DEFAULTS: SessionParams = {
-  model: 'qwen-max',
+  model: 'deepseek-v4.1-flash',
   temperature: 0.3,
   top_p: 0.8,
   max_tokens: 2048,

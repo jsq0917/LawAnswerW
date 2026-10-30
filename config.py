@@ -208,8 +208,19 @@ class Settings(BaseSettings):
     jwt_expire_hours: int = Field(default=24, ge=1, le=24 * 30)
     # 验证码与登录失败锁定（阶段 6）
     captcha_ttl_s: int = Field(default=120, ge=30, le=600)
+    # Redis 故障时验证码校验是否放行。dev 默认 True（本地不起 Redis 也能登录）；
+    # prod 由启动校验强制 False——否则缓存一挂，登录验证就形同虚设。
+    captcha_fail_open: bool = Field(
+        default=True,
+        description="Redis 故障时验证码校验是否放行；生产必须 false",
+    )
     login_fail_limit: int = Field(default=5, ge=1, le=100)
     login_fail_window_s: int = Field(default=60, ge=10, le=3600)
+    # 同一出口 IP 的失败上限（跨用户名累计）。只按用户名计数时，攻击者轮询不同
+    # 用户名可以无限爆破，还能把任意账号逐个锁死；因此必须有 IP 维度兜底。
+    # 30 次/5 分钟对 NAT 后多人共用的正常场景足够宽松。
+    login_fail_ip_limit: int = Field(default=30, ge=1, le=1000)
+    login_fail_ip_window_s: int = Field(default=300, ge=10, le=3600)
 
     # ---- MySQL ----
     mysql_host: str = "127.0.0.1"
@@ -235,9 +246,9 @@ class Settings(BaseSettings):
     milvus_timeout: int = Field(default=5, ge=1, le=60)
 
     # ---- LLM ----
-    llm_base_url: str = "https://api.deepseek.com"
-    llm_default_model: str = "deepseek-flash"
-    llm_thinking: str = ""  # DeepSeek: enabled/disabled；空=不传（DashScope/OpenAI 无此参数）
+    llm_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_default_model: str = "deepseek-v4.1-flash"
+    llm_thinking: str = "disabled"  # 百炼 DeepSeek-V4/qwen3 默认开思考，须显式 disabled；空=不传（其他厂商）
     llm_timeout_s: int = Field(default=60, ge=5, le=600)
     llm_max_retries: int = Field(default=2, ge=0, le=5)
 
@@ -282,7 +293,7 @@ class Settings(BaseSettings):
     # 用意图层的 law_hints 做检索法域预过滤（false = 全库检索，用于消融对照）
     retrieval_law_filter: bool = True
     # 法域过滤低置信回退：过滤检索后若 top1 重排分 < 阈值，说明意图可能判错法域、
-    # 正确法条被硬过滤筛掉（实测 law_hints 质量随意图模型波动，qwen-flash 判错时
+    # 正确法条被硬过滤筛掉（实测 law_hints 质量随意图模型能力波动，判错法域时
     # single_hop 整条掉 0），此时无过滤重查一次并按 parent 合并。0 = 关闭。
     retrieval_law_rescue_score: float = Field(default=0.5, ge=0.0, le=1.0)
     # 稀疏路候选池比例：<1 时稀疏少取候选，避免挤占稠密正确条的候选名额
@@ -291,6 +302,23 @@ class Settings(BaseSettings):
     qa_similarity_threshold: float = Field(default=0.90, ge=0.0, le=1.0)
     qa_bm25_topn: int = Field(default=3, ge=1, le=20)
     cache_qa_ttl: int = Field(default=604800, ge=60)
+    # 无稠密能力（EMBEDDING_PROVIDER=bm25）时的字面双门。
+    # bm25 的 dense 是固定零向量 → 余弦恒为 None → 缓存永远写不进去；
+    # 此时改用「字符序列相似度 + 2-gram Jaccard」双条件，只放行"几乎同一句"。
+    # 两个阈值必须同时达标才回放标准答案：宁可退回 RAG，也不能答非所问。
+    qa_text_gate_enabled: bool = Field(default=True)
+    qa_text_gate_ratio: float = Field(default=0.90, ge=0.0, le=1.0)
+    # ------------------------------------------------------------------
+    # 答案级缓存（把"实际生成过的整段回答"按问题哈希落 Redis）
+    # 为什么需要它：qa_pairs 只有预置的几十条标准问法，用户问的绝大多数问题
+    # 都不在库里 → 旧实现永远写不进缓存 → "同一问题问第二次仍要十几秒"。
+    # 命中即整段回放，跳过意图识别 / 检索 / 重排 / LLM，TTFT 从秒级降到毫秒级。
+    # ------------------------------------------------------------------
+    cache_answer_enabled: bool = Field(default=True)
+    cache_answer_ttl: int = Field(default=604800, ge=60)
+    #: 低于该字数不缓存（"你好""嗯"之类的短回答回放没有价值，还占内存）
+    cache_answer_min_chars: int = Field(default=80, ge=0)
+    qa_text_gate_jaccard: float = Field(default=0.65, ge=0.0, le=1.0)
 
     # ---- 生成链路（阶段 5）----
     gen_context_max_chars: int = Field(default=6000, ge=500, le=50000)
@@ -301,6 +329,19 @@ class Settings(BaseSettings):
     gen_replay_chunk_chars: int = Field(default=30, ge=5, le=500)
     gen_sources_limit: int = Field(default=10, ge=1, le=50)
 
+    # ---- 追问预测（回答后推荐 3 个可能的下一个问题）----
+    suggest_enabled: bool = Field(
+        default=True,
+        description="是否在每次回答后预测 3 条追问；关闭可省一次小模型调用",
+    )
+    suggest_timeout_s: int = Field(
+        default=8,
+        ge=2,
+        le=60,
+        description="追问预测超时；这是锦上添花的调用，超时即放弃，不重试不报错",
+    )
+    suggest_max_retries: int = Field(default=0, ge=0, le=3)
+
     # ---- 限流（chat 接口，防 LLM 费用被刷爆）----
     rate_limit_enabled: bool = Field(
         default=True,
@@ -308,6 +349,18 @@ class Settings(BaseSettings):
     )
     rate_limit_anonymous: int = Field(default=20, ge=1, le=600, description="匿名用户每分钟最大请求数")
     rate_limit_authed: int = Field(default=60, ge=1, le=1000, description="登录用户每分钟最大请求数")
+
+    # ---- 反向代理（决定"真实客户端 IP"从哪来）----
+    # 关着时一律用 TCP 对端地址；nginx 同机反代时必须打开，否则 client.host 恒为
+    # 127.0.0.1，匿名限流与登录失败计数会把全站当成同一个人。
+    trust_proxy: bool = Field(
+        default=False,
+        description="是否信任反向代理下发的 X-Real-IP / X-Forwarded-For",
+    )
+    trusted_proxies: str = Field(
+        default="127.0.0.1,::1",
+        description="可信代理地址，逗号分隔、支持 CIDR；仅当 TCP 对端在此列表内才读取 IP 头（防伪造）",
+    )
 
     # ---- 日志 ----
     log_dir: str = "logs"
@@ -359,6 +412,13 @@ class Settings(BaseSettings):
             raise ConfigError(
                 "生产环境必须通过环境变量 JWT_SECRET 设置一个强随机密钥，"
                 "不能使用默认值 dev-only-change-me-in-production"
+            )
+        # 生产环境不许验证码"存储故障时放行"：那等于把登录验证关掉。
+        # 开发环境保留 fail-open，避免本地没起 Redis 就完全登不进去。
+        if self.app_env == "prod" and self.captcha_fail_open:
+            raise ConfigError(
+                "生产环境必须设置 CAPTCHA_FAIL_OPEN=false：验证码校验在 Redis 故障时"
+                "若放行，等于任何人无需验证码即可尝试登录"
             )
         return self
 
@@ -554,7 +614,8 @@ def require_llm_api_key() -> str:
             "LLM_API_KEY / DEEPSEEK_API_KEY / DASHSCOPE_API_KEY；"
             "并确认 .env 中 LLM_BASE_URL 与 LLM_DEFAULT_MODEL 与该厂商匹配"
             "（DeepSeek: https://api.deepseek.com + deepseek-flash，并设 LLM_THINKING=disabled；"
-            "DashScope: https://dashscope.aliyuncs.com/compatible-mode/v1 + qwen-max）。"
+            "DashScope: https://dashscope.aliyuncs.com/compatible-mode/v1 + deepseek-v4.1-flash，"
+            "并设 LLM_THINKING=disabled）。"
         )
     return key
 

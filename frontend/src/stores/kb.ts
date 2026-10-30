@@ -25,6 +25,21 @@ export const useKbStore = defineStore('kb', () => {
     return kbs.value.find((k) => k.id === id)?.name || id
   }
 
+  /** 本地摘掉一个库（不动后端）：列表、文档缓存、kbName 一起失效。 */
+  function forgetKb(id: string) {
+    kbs.value = kbs.value.filter((k) => k.id !== id)
+    const rest = {...docsByKb.value}
+    delete rest[id]
+    docsByKb.value = rest
+  }
+
+  /** 删除知识库：先走后端，成功后再改本地状态，避免"删失败但列表已空"。 */
+  async function removeKb(id: string) {
+    const result = await kbApi.deleteKb(id)
+    forgetKb(id)
+    return result
+  }
+
   async function loadDocs(kbId: string) {
     const docs = await kbApi.listDocs(kbId)
     docsByKb.value = {...docsByKb.value, [kbId]: docs}
@@ -52,5 +67,5 @@ export const useKbStore = defineStore('kb', () => {
     }
   }
 
-  return {kbs, loading, docsByKb, loadKbs, loadDocs, kbName, startPolling}
+  return {kbs, loading, docsByKb, loadKbs, loadDocs, kbName, forgetKb, removeKb, startPolling}
 })

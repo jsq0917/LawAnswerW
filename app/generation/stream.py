@@ -43,6 +43,7 @@ from app.generation.prompts import (
     build_context_block,
     build_messages,
 )
+from app.orchestration.answer_cache import AnswerCache, CachedAnswer, get_answer_cache
 from app.orchestration.qa_cache import QARetriever
 from app.orchestration.service import QueryPlan, analyze_query
 from config import ConfigError, Settings, get_settings
@@ -79,17 +80,25 @@ class AnswerEngine:
         llm_client: LLMClient | None = None,
         retrieve_fn: Callable[..., Any] | None = None,
         persist_fn: Callable[..., bool] | None = None,
+        answer_cache: AnswerCache | None = None,
         settings: Settings | None = None,
     ) -> None:
         self._qa_retriever = qa_retriever
         self._llm_client = llm_client
         self._retrieve_fn = retrieve_fn
         self._persist_fn = persist_fn or persist_exchange
+        self._answer_cache = answer_cache
         self._settings = settings
 
     @property
     def settings(self) -> Settings:
         return self._settings or get_settings()
+
+    @property
+    def answer_cache(self) -> AnswerCache:
+        if self._answer_cache is None:
+            self._answer_cache = get_answer_cache()
+        return self._answer_cache
 
     # ------------------------------------------------------------------
     # 主入口
@@ -112,6 +121,18 @@ class AnswerEngine:
         query = (query or "").strip()
 
         try:
+            # ---- 0) 答案级缓存前置：整段回答直接回放 ----
+            # 键是问题本身的 sha1，不做任何相似度判定，因此"同一问题问第二次"
+            # 必然命中。旧实现只在命中问答库（qa_pairs）时才写缓存，用户问的
+            # 绝大多数问题不在库里 → 永远写不进去 → 第二次仍要十几秒。
+            cached_answer = self.answer_cache.lookup(
+                query, history=list(history) if history else None
+            )
+            if cached_answer is not None:
+                yield from self._answer_replay(cached_answer, result, gen_cfg, started, message_id)
+                yield self._done_frame(result, started)
+                return
+
             # ---- 意图 + 路由 + 结构化判定（阶段 4 编排入口，含 LLM 降级）----
             yield sse_frame("stage", {"stage": "intent"})
             plan = analyze_query(
@@ -251,6 +272,7 @@ class AnswerEngine:
             yield self._done_frame(result, started)
         finally:
             # 第 4 层：客户端断开（GeneratorExit）或任何路径，finally 保证落库一次
+            self._cache_answer(query, result, plan)
             self._persist(session_id, query, result, plan)
 
     # ------------------------------------------------------------------
@@ -328,6 +350,63 @@ class AnswerEngine:
                 result.ttft_ms = int((time.perf_counter() - started) * 1000)
             result.content += chunk.text
             yield sse_frame("delta", {"text": chunk.text})
+
+    def _answer_replay(
+        self,
+        cached: CachedAnswer,
+        result: StreamResult,
+        gen_cfg,
+        started: float,
+        message_id: str,
+    ) -> Iterator[str]:
+        """答案缓存命中：整段回放（保留打字机效果），不调意图/检索/LLM。"""
+        result.cached = True
+        result.sources = list(cached.sources)
+        yield sse_frame(
+            "meta",
+            {
+                "message_id": message_id,
+                "intent": cached.intent,
+                "route": cached.route,
+                "rewrite_type": cached.rewrite_type,
+                "complexity": cached.complexity,
+                "cached": True,
+                "degraded": False,
+            },
+        )
+        if result.sources:
+            yield sse_frame("sources", {"sources": result.sources})
+        yield sse_frame("stage", {"stage": "generate"})
+        yield from self._replay_fixed(cached.answer, gen_cfg.replay_chunk_chars, result, started)
+
+    #: 只有"检索 + 生成"链路才落答案缓存：greeting / no_data 是固定话术，
+    #: pure_structured 已由 qa_cache 写 qa:exact，重复写只是浪费内存。
+    _ANSWER_CACHE_ROUTES = frozenset({"pure_vector", "hybrid", "cross_law"})
+
+    def _cache_answer(self, query: str, result: StreamResult, plan: QueryPlan | None) -> None:
+        """把本次成功生成的回答写入答案缓存。
+
+        写入条件很严：缓存直出等于跳过 LLM，一条错答案会被固化整个 TTL。
+        断流 / 报错 / 无来源 / 缓存回放自身 / 固定话术分支一律不写。
+        """
+        if result.cached or plan is None or result.error:
+            return
+        if plan.route.route not in self._ANSWER_CACHE_ROUTES:
+            return
+        if not result.content.strip():
+            return
+        try:
+            self.answer_cache.store(
+                query,
+                answer=result.content,
+                sources=result.sources,
+                route=plan.route.route,
+                intent=plan.intent.intent,
+                rewrite_type=plan.intent.rewrite_type,
+                complexity=plan.intent.complexity,
+            )
+        except Exception as exc:  # noqa: BLE001 - 缓存失败永不影响主链路
+            logger.warning("答案缓存回写异常（已忽略）: %s", str(exc)[:200])
 
     def _structured_replay(self, plan: QueryPlan, result: StreamResult, gen_cfg, started: float) -> Iterator[str]:
         """纯结构化分支：标准答案分片回放（防御：无命中则降级引导话术）。"""

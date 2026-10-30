@@ -46,7 +46,7 @@ _SESSION_COLUMNS = (
 class SessionCreate(BaseModel):
     title: str = Field(default="新对话", min_length=1, max_length=128)
     kb_ids: list[str] = Field(default_factory=lambda: ["kb_labor", "kb_civil"], max_length=20)
-    model: str = Field(default="qwen-max", max_length=64)
+    model: str = Field(default="deepseek-v4.1-flash", max_length=64)
     temperature: float = Field(default=0.3, ge=0.0, le=1.5)
     top_p: float = Field(default=0.8, ge=0.1, le=1.0)
     max_tokens: int = Field(default=2048, ge=256, le=8192)

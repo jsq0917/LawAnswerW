@@ -10,16 +10,37 @@
       placeholder="4 位验证码"
       @input="onInput"
     />
-    <button class="captcha__img" type="button" title="点击刷新验证码" @click="$emit('refresh')">
+    <button
+      class="captcha__img"
+      :class="{'captcha__img--retry': retryIn > 0}"
+      type="button"
+      :title="retryIn > 0 ? '验证码服务暂不可用，点击立即重试' : '点击刷新验证码'"
+      @click="$emit('refresh')"
+    >
       <img v-if="image" :src="image" alt="图形验证码"/>
-      <span v-else class="faint">加载中…</span>
+      <span v-else-if="retryIn > 0" class="captcha__hint">{{ retryIn }}s 后重试</span>
+      <span v-else-if="loading" class="faint">加载中…</span>
+      <span v-else class="captcha__hint">点击重试</span>
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
-/** 图形验证码：服务端出 SVG（后端 app/core/captcha.py），点击刷新。 */
-const props = defineProps<{modelValue: string; image: string; error?: string | null}>()
+/** 图形验证码：服务端出 SVG（后端 app/core/captcha.py），点击刷新。
+ *
+ * `retryIn` 由 `useCaptcha` 驱动：服务端不可用时显示"Ns 后重试"倒计时，
+ * 用户也可以直接点按钮立刻重试——不要让人对着"加载中…"干等。
+ */
+withDefaults(
+  defineProps<{
+    modelValue: string
+    image: string
+    error?: string | null
+    retryIn?: number
+    loading?: boolean
+  }>(),
+  {error: null, retryIn: 0, loading: false},
+)
 const emit = defineEmits<{(e: 'update:modelValue', v: string): void; (e: 'refresh'): void}>()
 
 function onInput(e: Event) {
@@ -40,4 +61,6 @@ function onInput(e: Event) {
 }
 .captcha__img:hover { border-color: var(--c-primary); }
 .captcha__img img { width: 120px; height: 40px; display: block; }
+.captcha__img--retry { border-color: var(--c-warn, #B8860B); background: #FFF8E6; }
+.captcha__hint { font-size: 11.5px; line-height: 1.2; text-align: center; color: #8A6D1F; }
 </style>

@@ -102,10 +102,11 @@ class LLMClient:
         self._base_url = base_url or ""
         self._max_retries = max_retries
         #: 思考模式开关（enabled/disabled/空=不传），按 provider 适配参数形态：
-        #: - DeepSeek：官方默认 enabled，思考模式下 temperature 无效、输出上限 64K、
-        #:   延迟与费用显著上升，参数形态 ``thinking: {type: ...}``；
-        #: - DashScope qwen3 系（qwen-flash 等）：**默认动态思考**，RAG 生成实测
-        #:   首 token 前 17-26s 隐藏推理（TTFT≈总延迟），参数形态 ``enable_thinking``；
+        #: - DeepSeek 官方（api.deepseek.com）：默认 enabled，思考模式下 temperature 无效、
+        #:   输出上限 64K、延迟与费用显著上升，参数形态 ``thinking: {type: ...}``；
+        #: - 阿里云百炼（DashScope 兼容模式，含 DeepSeek-V4 系 deepseek-v4.1-flash 与
+        #:   qwen3 系）：**默认开思考**，RAG 生成实测首 token 前 17-26s 隐藏推理
+        #:   （TTFT≈总延迟），参数形态 ``enable_thinking``；
         #: - 其他 OpenAI 兼容厂商：不传。
         self._thinking = thinking.strip().lower()
 

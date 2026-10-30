@@ -3,9 +3,10 @@
 三态判定 + Redis 热缓存::
 
     query → 归一化（去标点/停用词）
-          → Redis qa:exact:{sha1} 精确缓存命中？          —— 是 → 返回（毫秒级）
+          → Redis qa:exact:{sha1} 精确缓存命中？          —— 是 → 返回（毫秒级，并续期）
           → MySQL ngram 全文 BM25 召回 top3
-          → bge-m3 余弦(query, top1.question_std) ≥ 0.90？ —— 是 → 精确命中
+          → 余弦(query, top1.question_std) ≥ 0.90？ —— 是 → 精确命中
+          → 无稠密能力（bm25）时改走字面双门：序列相似度 + 2-gram Jaccard
           → 未命中但命中话题 → 取同类 2 条作参考（与法条合并，不写缓存）
 
 Redis key 设计（TTL 见 :mod:`config`）：
@@ -26,6 +27,7 @@ import json
 import re
 import time
 from dataclasses import asdict, dataclass, field
+from difflib import SequenceMatcher
 from functools import lru_cache
 from typing import Any
 
@@ -70,6 +72,19 @@ def cache_key(norm_query: str) -> str:
     return REDIS_EXACT_PREFIX + hashlib.sha1(norm_query.encode("utf-8")).hexdigest()
 
 
+def _char_ngrams(text: str, n: int = 2) -> set[str]:
+    """字符 n-gram 集合。
+
+    用 n-gram 而不是 jieba 分词：中文短问句在分词边界上不稳定（"申请时效"
+    可能被切成"申请/时效"或"申请时/效"），字面重合度反而更可靠，且零加载成本。
+    """
+    if not text:
+        return set()
+    if len(text) <= n:
+        return {text}
+    return {text[i : i + n] for i in range(len(text) - n + 1)}
+
+
 @dataclass(frozen=True)
 class QAPair:
     """qa_pairs 表一行的应用层视图。"""
@@ -110,8 +125,9 @@ class QALookupResult:
 
     hit: QAPair | None = None  # 精确命中
     references: list[QAPair] = field(default_factory=list)  # 同类参考（混合链路的结论段素材）
-    source: str = "none"  # redis_exact | mysql_bm25_cosine | topic_reference | none
-    similarity: float | None = None  # 余弦门得分（命中时非 None）
+    #: redis_exact | mysql_bm25_cosine | mysql_bm25_textgate | topic_reference | none
+    source: str = "none"
+    similarity: float | None = None  # 余弦门/字面门得分（命中时非 None）
     elapsed_ms: int = 0
     error: str | None = None  # 非致命错误（如 Redis 不可用），降级不影响结果
 
@@ -200,6 +216,7 @@ class QARetriever:
         norm = normalize_question(query)
         hit = self._lookup_exact_cache(norm)
         if hit is not None:
+            self._touch(norm)
             logger.info("精确缓存前置命中 q=%.40s id=%s", query, hit.id)
         return hit
 
@@ -218,6 +235,7 @@ class QARetriever:
         norm = normalize_question(query)
         result = self._lookup_exact_cache(norm)
         if result is not None:
+            self._touch(norm)
             result = QALookupResult(
                 hit=result,
                 source="redis_exact",
@@ -237,11 +255,12 @@ class QARetriever:
 
         if candidates:
             top1 = candidates[0]
-            similarity = self._cosine(query, top1.question_std)
-            if similarity is not None and similarity >= self._settings.qa_similarity_threshold:
+            similarity, gate = self._similarity(query, top1.question_std)
+            if self._gate_passed(similarity, gate):
                 self._on_hit(norm, top1)
                 logger.info(
-                    "问答精确命中(BM25+余弦) q=%.40s id=%s sim=%.4f 耗时=%dms",
+                    "问答精确命中(%s) q=%.40s id=%s sim=%.4f 耗时=%dms",
+                    "BM25+余弦" if gate == "cosine" else "BM25+字面门",
                     query,
                     top1.id,
                     similarity,
@@ -249,17 +268,21 @@ class QARetriever:
                 )
                 return QALookupResult(
                     hit=top1,
-                    source="mysql_bm25_cosine",
+                    source="mysql_bm25_cosine" if gate == "cosine" else "mysql_bm25_textgate",
                     similarity=similarity,
                     elapsed_ms=_elapsed(started),
                     error=error,
                 )
             logger.info(
-                "问答未命中 q=%.40s top1_id=%s sim=%s(<%.2f)",
+                "问答未命中 q=%.40s top1_id=%s sim=%s(判据=%s 阈值=cos≥%.2f/text≥%.2f&%.2f) 耗时=%dms",
                 query,
                 top1.id,
                 f"{similarity:.4f}" if similarity is not None else "None",
+                gate,
                 self._settings.qa_similarity_threshold,
+                self._settings.qa_text_gate_ratio,
+                self._settings.qa_text_gate_jaccard,
+                _elapsed(started),
             )
 
         references: list[QAPair] = []
@@ -294,6 +317,21 @@ class QARetriever:
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             logger.warning("问答缓存内容损坏，忽略: %s", exc)
             return None
+
+    def _touch(self, norm: str) -> None:
+        """命中后续期，防止热缓存"到点即失效"。
+
+        原实现只在 ``_on_hit`` 写入时设 TTL，命中读路径完全不续期：
+        一条天天被问的问题也会在 7 天后准时过期，然后必须靠一次"冷查询"
+        （走完 BM25 + 余弦门 + 可能失败的 LLM）才可能写回来。
+        """
+        ttl = self._settings.cache_qa_ttl
+        if ttl <= 0:
+            return
+        try:
+            self.redis.expire(cache_key(norm), ttl)
+        except Exception as exc:  # noqa: BLE001 - 续期失败不影响回放
+            logger.warning("问答缓存续期失败: %s", exc)
 
     def _on_hit(self, norm: str, qa: QAPair) -> None:
         """命中后回写精确缓存 + 自增 MySQL 计数。缓存写入失败不影响返回。
@@ -364,8 +402,74 @@ class QARetriever:
         return [_row_to_qa(r) for r in rows]
 
     # ------------------------------------------------------------------
-    # 余弦门
+    # 余弦门 / 字面门
     # ------------------------------------------------------------------
+    @property
+    def _has_dense(self) -> bool:
+        """embedder 是否具备稠密语义能力（bm25 的 dense 是固定零向量）。"""
+        try:
+            return bool(getattr(self.embedder, "supports_dense", True))
+        except Exception as exc:  # noqa: BLE001 - embedder 构造失败（如缺密钥）
+            logger.warning("embedder 不可用，问答命中判据改用字面双门: %s", exc)
+            return False
+
+    def _similarity(self, query: str, question_std: str) -> tuple[float | None, str]:
+        """返回 ``(得分, 判据)``；判据 ∈ {"cosine", "text"}。
+
+        为什么必须分支：``Bm25Embedder`` 没有语义能力，``dense`` 恒为 1024 维
+        零向量 → ``denom = ‖a‖·‖b‖ = 0`` → 余弦恒为 None。原实现只看余弦，
+        于是 bm25 模式下命中判据**永远不成立** → 从不写缓存 → 相同问题
+        永远不秒回（且静默：不抛异常、不打 warning，日志只有"未命中"）。
+        """
+        if self._has_dense:
+            score = self._cosine(query, question_std)
+            if score is not None:
+                return score, "cosine"
+            logger.info("稠密向量不可用（零向量或编码失败），改用字面双门判定")
+        return self._text_gate(query, question_std), "text"
+
+    def _text_gate(self, query: str, question_std: str) -> float | None:
+        """字面双门：字符序列相似度 **且** 2-gram Jaccard 同时达标。
+
+        没有语义向量时唯一守得住的边界：只放行"几乎同一句"的问法差异
+        （标点、语气词、多余空格）。宁可退回 RAG 重新推理，也不能回放
+        一条答非所问的标准答案——缓存命中是要直接跳过 LLM 的。
+        """
+        if not self._settings.qa_text_gate_enabled:
+            logger.info("字面双门已禁用（QA_TEXT_GATE_ENABLED=false），按未命中处理")
+            return None
+        q = normalize_question(query)
+        s = normalize_question(question_std)
+        if not q or not s:
+            return None
+        if q == s:
+            return 1.0  # 归一化后完全一致：比任何阈值都确定
+        ratio = SequenceMatcher(None, q, s).ratio()
+        grams_q, grams_s = _char_ngrams(q), _char_ngrams(s)
+        union = grams_q | grams_s
+        jaccard = len(grams_q & grams_s) / len(union) if union else 0.0
+        need_ratio = self._settings.qa_text_gate_ratio
+        need_jaccard = self._settings.qa_text_gate_jaccard
+        if ratio < need_ratio or jaccard < need_jaccard:
+            logger.info(
+                "字面双门未达标 q=%.40s std=%.40s ratio=%.3f(<%.2f) jaccard=%.3f(<%.2f)",
+                query,
+                question_std,
+                ratio,
+                need_ratio,
+                jaccard,
+                need_jaccard,
+            )
+            return None
+        return min(ratio, jaccard)
+
+    def _gate_passed(self, similarity: float | None, gate: str) -> bool:
+        if similarity is None:
+            return False
+        if gate == "cosine":
+            return similarity >= self._settings.qa_similarity_threshold
+        return True  # 字面门的阈值已在 _text_gate 内部判定
+
     def _cosine(self, query: str, question_std: str) -> float | None:
         """bge-m3 稠密向量余弦相似度；embedder 故障返回 None（视为不命中）。"""
         try:
@@ -388,6 +492,9 @@ class _NullRedis:
         return None
 
     def set(self, *_a: Any, **_k: Any) -> None:
+        return None
+
+    def expire(self, *_a: Any, **_k: Any) -> None:
         return None
 
     def zincrby(self, *_a: Any, **_k: Any) -> None:

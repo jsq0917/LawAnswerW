@@ -88,6 +88,7 @@ class FakeDB:
             {
                 "id": "c1",
                 "doc_id": "doc1",
+                "kb_id": "kb_labor",
                 "chunk_type": "parent",
                 "parent_id": None,
                 "chunk_index": 0,
@@ -100,6 +101,7 @@ class FakeDB:
                 "is_enabled": 1,
             }
         ]
+        self.qa_detached: list[str] = []
         self.commits = 0
 
     # -- 写入辅助（测试直接调用造数据） -------------------------------------
@@ -114,7 +116,7 @@ class FakeDB:
             "user_id": user_id,
             "title": kw.get("title", "新对话"),
             "kb_ids": kw.get("kb_ids", ["kb_labor", "kb_civil"]),
-            "model": kw.get("model", "qwen-max"),
+            "model": kw.get("model", "deepseek-v4.1-flash"),
             "temperature": kw.get("temperature", 0.3),
             "top_p": kw.get("top_p", 0.8),
             "max_tokens": kw.get("max_tokens", 2048),
@@ -186,7 +188,7 @@ class FakeDB:
                 p["uid"],
                 title=p.get("title", "新对话"),
                 kb_ids=_as_list(p.get("kb_ids")),
-                model=p.get("model", "qwen-max"),
+                model=p.get("model", "deepseek-v4.1-flash"),
                 temperature=p.get("temperature", 0.3),
                 top_p=p.get("top_p", 0.8),
                 max_tokens=p.get("max_tokens", 2048),
@@ -235,8 +237,28 @@ class FakeDB:
                 }
             )
             return _Result()
+        if low.startswith("select id, name, doc_count, chunk_count from knowledge_bases"):
+            return _Result([k for k in self.kbs if k["id"] == p.get("id")])
+        if low.startswith("delete from knowledge_bases"):
+            kb_id = p.get("id")
+            self.kbs = [k for k in self.kbs if k["id"] != kb_id]
+            # 真库靠外键 ON DELETE CASCADE 带走文档/块，假库这里手动模拟
+            self.docs = [d for d in self.docs if d["kb_id"] != kb_id]
+            self.chunks = [c for c in self.chunks if c.get("kb_id") != kb_id]
+            return _Result()
+        if low.startswith("update qa_pairs"):
+            self.qa_detached.append(p.get("kb_id"))
+            return _Result()
 
         # ---- documents ----
+        if low.startswith("select count(*) from documents"):
+            busy = sum(
+                1
+                for d in self.docs
+                if d["kb_id"] == p.get("kb_id")
+                and d["status"] in ("pending", "parsing", "chunking", "embedding")
+            )
+            return _Result(scalar=busy)
         if low.startswith("select id, filename") and "from documents" in low:
             return _Result([d for d in self.docs if d["kb_id"] == p.get("kb_id")])
         if low.startswith("select id, kb_id, filename") and "from documents" in low:
@@ -251,6 +273,8 @@ class FakeDB:
         # ---- document_chunks ----
         if low.startswith("select count(*) from document_chunks"):
             return _Result(scalar=len(self.chunks))
+        if low.startswith("select id from document_chunks where kb_id"):
+            return _Result([c for c in self.chunks if c.get("kb_id") == p.get("kb_id")])
         if "from document_chunks" in low and "where doc_id" in low:
             return _Result(self.chunks[: int(p.get("limit", 50))])
 

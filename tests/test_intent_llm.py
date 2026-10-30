@@ -26,7 +26,7 @@ def _llm_response(content: str):
     """假 LLM 响应（与 app.generation.llm_client.LLMResponse 同构）。"""
     from app.generation.llm_client import LLMResponse
 
-    return LLMResponse(content=content, model="qwen-max", latency_ms=100, usage={})
+    return LLMResponse(content=content, model="deepseek-v4.1-flash", latency_ms=100, usage={})
 
 
 class FakeClient:

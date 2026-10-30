@@ -17,6 +17,7 @@ from fastapi import Depends, Request
 
 from app.core.errors import RateLimited
 from app.core.logger import get_logger
+from app.core.netutil import client_ip
 from app.core.security import get_current_user
 from app.db.redis_client import get_redis
 from config import Settings, get_settings
@@ -33,14 +34,14 @@ return count
 """
 
 
-def _client_ip(request: Request) -> str:
+def _client_ip(request: Request, settings: Settings | None = None) -> str:
     """取客户端 IP。
 
-    直接取 TCP 对端地址，**不信任 X-Forwarded-For**——本项目直连部署
-    （无反向代理改写 XFF），信任 XFF 等于让客户端伪造任意 IP 绕过限流。
-    若未来加了反向代理，应改为"可信代理链上取最后一跳"。
+    走统一的 :func:`app.core.netutil.client_ip`：同机 nginx 反代时对端恒为
+    127.0.0.1，必须按 ``trust_proxy`` 配置读 ``X-Real-IP``，否则全站访客
+    共享同一个限流桶（一个刷子能让所有人 429）。
     """
-    return request.client.host if request.client else "unknown"
+    return client_ip(request, settings)
 
 
 def check_rate_limit(
@@ -53,7 +54,7 @@ def check_rate_limit(
 
     :param user_id: 登录用户 ID；None 表示匿名，按 IP 限流
     """
-    _enforce(_client_ip(request), user_id, settings)
+    _enforce(_client_ip(request, settings), user_id, settings)
 
 
 def rate_limit_dep(

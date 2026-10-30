@@ -54,12 +54,27 @@ export interface ChunkPage {
   items: ChunkItem[]
 }
 
+/** 删除知识库的回执：统计量用于删除成功的提示文案。 */
+export interface DeletedKb {
+  deleted: string
+  name: string
+  doc_count: number
+  chunk_count: number
+  chunk_vectors: number
+  file_count: number
+}
+
 export function listKbs(): Promise<KnowledgeBase[]> {
   return http.get<KnowledgeBase[]>('/kbs').then((r) => r.data)
 }
 
 export function createKb(payload: {id: string; name: string; description?: string}): Promise<{id: string; name: string}> {
   return http.post('/kbs', payload).then((r) => r.data)
+}
+
+/** 删除整个知识库（连带文档、块、向量、源文件），不可恢复。 */
+export function deleteKb(kbId: string): Promise<DeletedKb> {
+  return http.delete<DeletedKb>(`/kbs/${kbId}`).then((r) => r.data)
 }
 
 export function listDocs(kbId: string): Promise<DocumentItem[]> {

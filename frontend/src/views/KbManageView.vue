@@ -19,7 +19,10 @@
             </div>
             <div class="kb-card__foot">
               <span class="faint">{{ kb.id }}</span>
-              <span class="faint">{{ kb.updated_at ? kb.updated_at.slice(0, 16) : '' }}</span>
+              <span class="kb-card__foot-right">
+                <span class="faint">{{ kb.updated_at ? kb.updated_at.slice(0, 16) : '' }}</span>
+                <button class="link-btn link-btn--danger" type="button" @click.stop="confirmRemoveKb(kb)">删除</button>
+              </span>
             </div>
           </article>
         </div>
@@ -42,6 +45,7 @@
           <div class="row" style="gap: 8px">
             <button class="btn btn--ghost btn--sm" type="button" @click="refreshDocs">刷新</button>
             <button class="btn btn--sm" type="button" @click="goParse">上传文档</button>
+            <button class="btn btn--ghost btn--sm kb__danger" type="button" @click="confirmRemoveKb(selectedKb)">删除知识库</button>
           </div>
         </div>
 
@@ -194,6 +198,35 @@ async function removeDoc(doc: DocumentItem) {
   }
 }
 
+/* ---------- 删除知识库 ---------- */
+/** 删库不可恢复：确认框里把"会一起删掉什么"写清楚，而不是只问"确定吗"。 */
+async function confirmRemoveKb(kb: KnowledgeBase) {
+  const scope = kb.doc_count || kb.chunk_count
+    ? `将同时删除其 ${kb.doc_count} 个文档、${kb.chunk_count} 个块与全部向量，源文件也会清理`
+    : '该库还没有文档，只删除空库本身'
+  try {
+    await ElMessageBox.confirm(`删除「${kb.name}」${scope}，且不可恢复。确定继续？`, '删除知识库', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    const result = await kbStore.removeKb(kb.id)
+    if (selectedKb.value?.id === kb.id) {
+      // 正停在这个库的文档列表里：退回列表，并把库详情一起清掉
+      selectedKb.value = null
+      docs.value = []
+      await kbStore.loadKbs(true)
+    }
+    toast.success(`已删除「${result.name}」`)
+  } catch (err) {
+    toast.error(errorText(err))
+  }
+}
+
 /* ---------- 新建 ---------- */
 function openCreate() {
   createForm.name = ''
@@ -253,6 +286,8 @@ onMounted(() => kbStore.loadKbs(true))
 .kb-card__stats { display: flex; gap: 14px; font-size: 12.5px; color: var(--c-muted); }
 .kb-card__stats b { color: var(--c-text); font-size: 15px; }
 .kb-card__foot { display: flex; justify-content: space-between; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--c-border); font-size: 11.5px; }
+.kb-card__foot-right { display: flex; align-items: center; gap: 10px; }
+.kb__danger { color: var(--c-danger); }
 
 .icon-btn {
   width: 30px; height: 30px; border: 1px solid var(--c-border); border-radius: 8px;
@@ -274,6 +309,7 @@ onMounted(() => kbStore.loadKbs(true))
 .doc-table__row:hover { background: #FAFBFE; }
 .doc-table__ops { display: flex; gap: 10px; }
 .link-btn { border: none; background: transparent; color: var(--c-primary); font-size: 12.5px; cursor: pointer; padding: 0; }
+.link-btn:hover { text-decoration: underline; }
 .link-btn--danger { color: var(--c-danger); }
 
 @media (max-width: 900px) {

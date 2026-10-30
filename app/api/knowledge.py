@@ -21,10 +21,13 @@ from app.db.mysql import get_db
 from app.ingest.loaders import detect_file_type
 from app.ingest.pipeline import ingest_file, new_id
 from app.ingest.service import (
+    KbBusyError,
     UploadRejected,
     create_pending_document,
     delete_document as delete_document_service,
+    delete_knowledge_base,
     disable_chunk,
+    purge_kb_files,
     run_ingest_job,
     save_upload,
     update_chunk_content,
@@ -84,6 +87,25 @@ def create_kb(payload: KbCreate, db: Session = Depends(get_db)) -> dict:
     )
     db.commit()
     return {"id": payload.id, "name": payload.name}
+
+
+@router.delete("/kbs/{kb_id}", summary="删除知识库（含文档、块、向量与源文件）")
+def remove_kb(kb_id: str, db: Session = Depends(get_db)) -> dict:
+    """删除整个知识库。
+
+    删除前必须由前端二次确认（这是不可恢复操作）；后端额外拒绝了"还有文档在解析"
+    的请求，避免后台任务写回已被删掉的行。
+    """
+    try:
+        result = delete_knowledge_base(db, kb_id)
+    except LookupError as exc:
+        raise NotFoundError(str(exc)) from exc
+    except KbBusyError as exc:
+        raise ConflictError(str(exc)) from exc
+    db.commit()
+    # 事务提交成功后才删源文件：万一提交失败，至少文件还在
+    result["file_count"] = purge_kb_files(kb_id)
+    return result
 
 
 # ---------------------------------------------------------------------------

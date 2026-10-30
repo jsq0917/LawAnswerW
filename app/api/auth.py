@@ -11,7 +11,11 @@
 安全约定：
 * 账号不存在与密码错误返回**同一句**"账号或密码错误"，避免枚举账号；
 * 账号不存在时也做一次 bcrypt 哑校验（耗时对齐）；
-* 连续失败 ``login_fail_limit`` 次（默认 5）锁定 ``login_fail_window_s`` 秒（Redis 计数）；
+* 账号维度：连续失败 ``login_fail_limit`` 次（默认 5）锁定 ``login_fail_window_s`` 秒；
+* IP 维度：同一出口在 ``login_fail_ip_window_s`` 内失败 ``login_fail_ip_limit`` 次（默认
+  30 次/5 分钟）整体拒绝——只按账号计数时，攻击者轮询用户名即可无限爆破，还能把任意
+  账号逐个锁死；成功登录只把 IP 计数减一（不清零，防用自己的账号刷掉积累）；
+* 以上计数都在 Redis，Redis 故障时降级为不锁（可用性优先）；
 * 验证码**一次性**，校验即删除。
 """
 
@@ -25,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.core import captcha as captcha_svc
 from app.core.errors import AuthError, ConflictError, RateLimited
 from app.core.logger import get_logger
+from app.core.netutil import client_ip
 from app.core.security import (
     CurrentUser,
     create_access_token,
@@ -43,6 +48,7 @@ logger = get_logger("lawanswer.auth")
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _FAIL_PREFIX = "login:fail:"
+_FAIL_IP_PREFIX = "login:ipfail:"
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +120,7 @@ def touch_login(db: Session, user_id: int) -> None:
 # ---------------------------------------------------------------------------
 # 登录失败计数（Redis，故障时降级不锁）
 # ---------------------------------------------------------------------------
-def _fail_counter(username: str, settings: Settings):
+def _fail_counter(settings: Settings):
     from app.db.redis_client import get_redis
 
     try:
@@ -124,38 +130,63 @@ def _fail_counter(username: str, settings: Settings):
         return None
 
 
-def _check_locked(username: str, settings: Settings) -> None:
-    r = _fail_counter(username, settings)
-    if r is None:
-        return
+def _count(r, key: str) -> int:
     try:
-        raw = r.get(_FAIL_PREFIX + username)
-        count = int(raw or 0)
+        return int(r.get(key) or 0)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _bump(r, key: str, window_s: int) -> None:
+    try:
+        if int(r.incr(key)) == 1:
+            r.expire(key, window_s)
     except Exception:  # noqa: BLE001
         return
-    if count >= settings.login_fail_limit:
+
+
+def _check_locked(username: str, ip: str, settings: Settings) -> None:
+    """先判 IP 维度，再判账号维度。
+
+    顺序不能反：先判账号意味着攻击者可以靠轮询用户名把任意账号逐个锁死，
+    同时自己不受任何约束。IP 维度是"这台机器整体在爆破"的兜底。
+    """
+    r = _fail_counter(settings)
+    if r is None:
+        return
+    if _count(r, _FAIL_IP_PREFIX + ip) >= settings.login_fail_ip_limit:
+        logger.warning("登录被 IP 维度锁定 ip=%s", ip)
+        raise RateLimited(
+            f"该网络登录失败次数过多，请 {settings.login_fail_ip_window_s} 秒后再试"
+        )
+    if _count(r, _FAIL_PREFIX + username) >= settings.login_fail_limit:
         raise RateLimited(f"登录失败次数过多，请 {settings.login_fail_window_s} 秒后再试")
 
 
-def _record_failure(username: str, settings: Settings) -> None:
-    r = _fail_counter(username, settings)
+def _record_failure(username: str, ip: str, settings: Settings) -> None:
+    r = _fail_counter(settings)
     if r is None:
         return
-    try:
-        key = _FAIL_PREFIX + username
-        count = r.incr(key)
-        if int(count) == 1:
-            r.expire(key, settings.login_fail_window_s)
-    except Exception:  # noqa: BLE001
-        return
+    _bump(r, _FAIL_PREFIX + username, settings.login_fail_window_s)
+    _bump(r, _FAIL_IP_PREFIX + ip, settings.login_fail_ip_window_s)
 
 
-def _clear_failures(username: str, settings: Settings) -> None:
-    r = _fail_counter(username, settings)
+def _clear_failures(username: str, ip: str, settings: Settings) -> None:
+    """登录成功：账号维度清零，IP 维度**只抵消一次**。
+
+    IP 维度若也清零，攻击者拿自己的合法账号反复登录就能把 30 次积累刷掉，
+    爆破防线形同虚设；减一既让正常用户"用成功抵消自己的手误"，又不给刷。
+    """
+    r = _fail_counter(settings)
     if r is None:
         return
     try:
         r.delete(_FAIL_PREFIX + username)
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        if int(r.decr(_FAIL_IP_PREFIX + ip)) <= 0:
+            r.delete(_FAIL_IP_PREFIX + ip)
     except Exception:  # noqa: BLE001
         return
 
@@ -203,23 +234,24 @@ def register(payload: RegisterRequest, request: Request, db: Session = Depends(g
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
     s = get_settings()
     username = (payload.username or "").strip()
+    ip = _client_ip(request)
 
-    _check_locked(username, s)
+    _check_locked(username, ip, s)
     if not captcha_svc.verify_captcha(payload.captcha_id, payload.captcha_code, settings=s):
         raise AuthError("验证码错误或已过期，请刷新后重试", code="captcha_invalid", status_code=422)
 
     user = find_user_by_username(db, username)
     if user is None:
         dummy_verify()  # 耗时对齐，防响应时间枚举账号
-        _record_failure(username, s)
+        _record_failure(username, ip, s)
         raise AuthError("账号或密码错误")
     if not verify_password(payload.password, user["password_hash"]):
-        _record_failure(username, s)
+        _record_failure(username, ip, s)
         raise AuthError("账号或密码错误")
     if int(user["status"]) != 1:
         raise AuthError("账号已被禁用，请联系管理员", code="forbidden", status_code=403)
 
-    _clear_failures(username, s)
+    _clear_failures(username, ip, s)
     touch_login(db, int(user["id"]))
     db.commit()
     token = create_access_token(int(user["id"]), user["username"], settings=s)
@@ -237,4 +269,5 @@ def me(user: CurrentUser = Depends(get_current_user)) -> UserOut:
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "-"
+    """日志与失败计数统一走 netutil（nginx 反代下对端恒为 127.0.0.1）。"""
+    return client_ip(request)

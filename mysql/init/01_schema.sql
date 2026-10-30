@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     user_id        BIGINT UNSIGNED NOT NULL,
     title          VARCHAR(128)  NOT NULL DEFAULT '新对话',
     kb_ids         JSON          NOT NULL                COMMENT '勾选的知识库 id 数组',
-    model          VARCHAR(64)   NOT NULL DEFAULT 'qwen-max',
+    model          VARCHAR(64)   NOT NULL DEFAULT 'deepseek-v4.1-flash',
     temperature    DECIMAL(3,2)  NOT NULL DEFAULT 0.30,
     top_p          DECIMAL(3,2)  NOT NULL DEFAULT 0.80,
     max_tokens     INT           NOT NULL DEFAULT 2048,

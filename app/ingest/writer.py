@@ -256,6 +256,26 @@ def delete_document_vectors(client, collection: str, doc_id: str) -> None:
     client.delete(collection_name=collection, filter=f'doc_id == "{doc_id}"')
 
 
+VECTOR_DELETE_BATCH = 200
+
+
+def delete_chunk_vectors(client, collection: str, chunk_ids: Sequence[str]) -> int:
+    """按主键批量删向量（删整个知识库时用）。
+
+    为什么不用 ``kb_id == "xxx"`` 一条表达式删完：``kb_id`` 是 partition key
+    字段，Milvus 对分区键过滤的支持随版本/实现（lite vs standalone）差异较大，
+    而主键删除在所有实现上都成立，且天然幂等——删到一半失败重试即可。
+    """
+    total = 0
+    ids = [str(cid) for cid in chunk_ids]
+    for start in range(0, len(ids), VECTOR_DELETE_BATCH):
+        batch = ids[start : start + VECTOR_DELETE_BATCH]
+        quoted = ", ".join(f'"{cid}"' for cid in batch)
+        client.delete(collection_name=collection, filter=f"chunk_id in [{quoted}]")
+        total += len(batch)
+    return total
+
+
 def delete_chunk_vector(client, collection: str, chunk_id: str) -> None:
     client.delete(collection_name=collection, filter=f'chunk_id == "{chunk_id}"')
 

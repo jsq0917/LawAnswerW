@@ -48,6 +48,9 @@ services:
     container_name: lawanswer-redis
     image: redis:7.2
     restart: unless-stopped
+    # 与 ./volumes/redis 的属主保持一致（redis 镜像内 redis 用户 uid=999）。
+    # ⚠️ 不要把 volumes/ chown 成 lawanswer(994)，否则 bgsave 写不了 → MISCONF → 全站写失败。
+    user: "999:999"
     command:
       - redis-server
       - --appendonly

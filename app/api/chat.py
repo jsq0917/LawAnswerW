@@ -15,6 +15,10 @@
 * 客户端断开（AbortController）→ 异步任务被取消 → 关闭同步生成器 →
   ``AnswerEngine`` 的 ``finally`` 照常落库、不发 error（§6.5 容错第 4 层）；
 * ``session_id`` 可选：传了且会话存在才落库（阶段 6 接入登录/会话后即为默认路径）。
+
+另有 ``POST /api/chat/suggestions``：回答结束后预测 3 条追问。
+它**刻意不并入 SSE 流**——并进去会拖慢 ``done`` 事件（用户看到答案却还在等流，
+输入框一直锁着），且预测失败会污染主链路；独立端点失败只返回空列表。
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from app.core.security import CurrentUser, TokenError, get_current_user_optional
 from app.core.sse import SSE_HEADERS, SSE_MEDIA_TYPE
 from app.db.mysql import session_scope
 from app.generation.stream import AnswerEngine
+from app.generation.suggestions import generate_suggestions
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -87,3 +92,44 @@ async def chat_stream(
             frames.close()
 
     return StreamingResponse(event_stream(), media_type=SSE_MEDIA_TYPE, headers=SSE_HEADERS)
+
+
+# ---------------------------------------------------------------------------
+# 追问预测（问题推荐）
+# ---------------------------------------------------------------------------
+class SuggestionsRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000, description="用户刚问的问题")
+    answer: str = Field(min_length=1, max_length=8000, description="助手刚给出的回答")
+    law_names: list[str] = Field(default_factory=list, description="回答涉及的法律名（可选，用于收敛方向）")
+
+
+class SuggestionsResponse(BaseModel):
+    suggestions: list[str] = Field(default_factory=list, description="最多 3 条；预测失败为空列表")
+
+
+@router.post(
+    "/chat/suggestions",
+    response_model=SuggestionsResponse,
+    summary="追问预测（回答后推荐 3 个可能的下一个问题）",
+)
+async def chat_suggestions(
+    payload: SuggestionsRequest,
+    request: Request,
+    user: CurrentUser | None = Depends(get_current_user_optional),
+) -> SuggestionsResponse:
+    """**不挂在 SSE 流里**：回答渲染完成后前端另行调用。
+
+    这样预测慢几秒也不会拖住 ``done`` 事件（否则输入框会被一直锁着）；
+    预测失败只返回空列表，前端不展示推荐区，**不影响任何主链路**。
+    """
+    await run_in_threadpool(
+        check_rate_limit, request, user_id=user.id if user else None
+    )
+    items = await run_in_threadpool(
+        generate_suggestions,
+        payload.query,
+        payload.answer,
+        law_names=payload.law_names or None,
+    )
+    return SuggestionsResponse(suggestions=items)
+

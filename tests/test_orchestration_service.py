@@ -18,7 +18,7 @@ FENCE = "`" * 3
 
 
 def _llm_response(content: str) -> LLMResponse:
-    return LLMResponse(content=content, model="qwen-max", latency_ms=50, usage={})
+    return LLMResponse(content=content, model="deepseek-v4.1-flash", latency_ms=50, usage={})
 
 
 class FakeIntentClient:
