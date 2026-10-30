@@ -1,0 +1,97 @@
+<html style="margin:0;padding:0;">
+<title>LawAnswer 代码与线上问题优先级矩阵</title>
+<div style="width:100%;box-sizing:border-box;font-family:'Microsoft YaHei',system-ui,sans-serif;color:#1f2937;background:#f8fafc;padding:16px;border-radius:12px;max-width:1080px;">
+
+  <div style="font-size:18px;font-weight:700;color:#0f172a;margin-bottom:4px;">LawAnswer 问题优先级总览（2026-10-27 实测）</div>
+  <div style="font-size:13px;color:#64748b;margin-bottom:12px;">左侧=代码层面（本地可改），右侧=线上运行层面（需上机处置）。P0 正在发生，今天处理。</div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;">
+
+    <!-- 表头 -->
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#1e293b;color:#fff;font-size:14px;font-weight:600;text-align:center;padding:8px 6px;border-radius:8px;">代码层面 · 6+5 项</div>
+    </div>
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#1e293b;color:#fff;font-size:14px;font-weight:600;text-align:center;padding:8px 6px;border-radius:8px;">线上运行层面 · 1+4+2 项</div>
+    </div>
+  </div>
+
+  <!-- P0 行 -->
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#fecaca;border:1px solid #ef4444;border-radius:8px;padding:10px;min-height:96px;">
+        <div style="font-size:14px;font-weight:700;color:#b91c1c;margin-bottom:6px;">P0 严重 · 无</div>
+        <div style="font-size:13px;color:#7f1d1d;">代码层无 P0 级问题</div>
+      </div>
+    </div>
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#fecaca;border:1px solid #ef4444;border-radius:8px;padding:10px;min-height:96px;">
+        <div style="font-size:14px;font-weight:700;color:#b91c1c;margin-bottom:6px;">P0 正在发生 · 1 项</div>
+        <div style="font-size:13px;color:#7f1d1d;line-height:1.6;">① Redis MISCONF（无法持久化 RDB）→ 验证码 502 → 登录/注册全站锁死（健康检查 redis:down，磁盘满或目录不可写）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P1 行 -->
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#ffedd5;border:1px solid #f97316;border-radius:8px;padding:10px;min-height:150px;">
+        <div style="font-size:14px;font-weight:700;color:#c2410c;margin-bottom:6px;">P1 明确缺陷 · 6 项</div>
+        <div style="font-size:13px;color:#7c2d12;line-height:1.7;">
+          ① 匿名限流取 TCP peer，nginx 反代后全站共享 127.0.0.1 桶<br/>
+          ② 登录失败仅按用户名计数，跨用户名爆破无节流<br/>
+          ③ 验证码生成 fail-closed / 校验 fail-open，prod 缺开关<br/>
+          ④ 上传解析 BackgroundTasks 无并发上限，可打满 CPU<br/>
+          ⑤ 前端全量引入 Element Plus，vendor 体积大<br/>
+          ⑥ retry() 绕过 Pinia 直接改 store 状态
+        </div>
+      </div>
+    </div>
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#ffedd5;border:1px solid #f97316;border-radius:8px;padding:10px;min-height:150px;">
+        <div style="font-size:14px;font-weight:700;color:#c2410c;margin-bottom:6px;">P1 明确缺陷 · 4 项</div>
+        <div style="font-size:13px;color:#7c2d12;line-height:1.7;">
+          ① 线上 nginx 未下发安全头（XFO/nosniff/Referrer 全空，与仓库 conf 不一致）<br/>
+          ② 验证码失败无自动重试/倒计时，用户只能干等<br/>
+          ③ 前端覆盖式发布，切换窗口期新 index.html + 旧资源 404<br/>
+          ④ 路由守卫强制登录，登录挂了=全站不可用（后端本支持匿名）
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- P2 行 -->
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#fef9c3;border:1px solid #eab308;border-radius:8px;padding:10px;min-height:120px;">
+        <div style="font-size:14px;font-weight:700;color:#a16207;margin-bottom:6px;">P2 质量改进 · 5 项</div>
+        <div style="font-size:13px;color:#713f12;line-height:1.7;">
+          ① BaseHTTPMiddleware 换纯 ASGI（SSE 链路）<br/>
+          ② 缺 /metrics 与磁盘/依赖告警<br/>
+          ③ 前端无 vitest 单测<br/>
+          ④ 模型常驻 ~4.6G：API embedding 或 reranker 开关<br/>
+          ⑤ /docs 公网可见、hit_count 热路径写库等
+        </div>
+      </div>
+    </div>
+    <div style="flex:1 1 460px;min-width:440px;display:flex;gap:10px;">
+      <div style="flex:1;background:#fef9c3;border:1px solid #eab308;border-radius:8px;padding:10px;min-height:120px;">
+        <div style="font-size:14px;font-weight:700;color:#a16207;margin-bottom:6px;">P2 质量改进 · 2 项</div>
+        <div style="font-size:13px;color:#713f12;line-height:1.7;">
+          ① SSH 22 对全网开放（部署方案要求仅限本地 IP）<br/>
+          ② MySQL 96ms / Milvus 51ms 延迟偏高，实例资源吃紧<br/>
+          　（可加磁盘水位探针防 Redis 事故复发）
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部处置顺序 -->
+  <div style="margin-top:12px;background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:10px;font-size:13px;color:#1e40af;line-height:1.7;">
+    <b>处置顺序：</b>今天：修 Redis 磁盘 → 验证码恢复 → 收紧 SSH 22 → 核对线上 nginx 安全头；
+    本周：限流适配反代、验证码 fail-open 开关 + 前端自动重试、登录失败按 IP、原子发布脚本；
+    本月：按需引入 Element Plus、ingest 并发闸门、/metrics + 告警、前端 vitest。
+  </div>
+  <div style="margin-top:8px;font-size:12px;color:#94a3b8;">核心问答链路线上正常：匿名 SSE 实测 3.4s 完整回答（意图→检索→重排→4 条法条来源→流式生成）；端口暴露面良好（仅 443/22）。</div>
+</div>
+</html>

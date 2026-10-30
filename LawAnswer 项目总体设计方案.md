@@ -11,7 +11,7 @@
 
 ### 0.1 一句话定位
 
-LawAnswer 是一个**面向法律条文的多路 RAG 问答系统**：把三部法律（劳动合同法 98 条 / 劳动法 107 条 / 民法典 1260 条）按"编→章→节→条→款"结构化切块，用 bge-m3 的稠密+稀疏双向量存入 Milvus，配合"MySQL 高频问答对 + Redis 热缓存"的结构化链路做双源路由，经 RRF 融合与 bge-reranker-v2-m3 重排后，由 qwen-max 流式生成**带法条引用**的中文回答。
+LawAnswer 是一个**面向法律条文的多路 RAG 问答系统**：把三部法律（劳动合同法 98 条 / 劳动法 107 条 / 民法典 1260 条）按"编→章→节→条→款"结构化切块，用 bge-m3 的稠密+稀疏双向量存入 Milvus，配合"MySQL 高频问答对 + Redis 热缓存"的结构化链路做双源路由，经 RRF 融合与 bge-reranker-v2-m3 重排后，由 deepseek-v4.1-flash 流式生成**带法条引用**的中文回答。
 
 ### 0.2 本机环境实测结论（与你给的前提有 3 处偏差，需注意）
 
@@ -65,7 +65,7 @@ LawAnswer 是一个**面向法律条文的多路 RAG 问答系统**：把三部�
 ┌───▼──────────────┐ ┌─────▼──────────────────┐ ┌───▼──────────────────┐
 │ 检索层 A：结构化  │ │ 检索层 B：向量          │ │ 生成层               │
 │ MySQL qa_pairs    │ │ bge-m3 (dense+sparse)  │ │ 中文法律 Prompt       │
-│ BM25 召回 + 余弦门 │ │ Milvus 双路 AnnSearch   │ │ qwen-max (OpenAI 兼容)│
+│ BM25 召回 + 余弦门 │ │ Milvus 双路 AnnSearch   │ │ DeepSeek V4.1-Flash   │
 │ Redis 热缓存      │ │ RRF(k=60) → reranker    │ │ SSE 逐 token 推送     │
 │                  │ │ 动态 topK → 父块回表     │ │ 历史 5 轮 / 来源列表  │
 └───┬──────────────┘ └────────────────────────┘ └───┬──────────────────┘
@@ -207,7 +207,7 @@ LawAnswer/
 | user_id | BIGINT UNSIGNED | NOT NULL | 归属用户 |
 | title | VARCHAR(128) | NOT NULL DEFAULT '新对话' | 可自定义；首轮问题可自动补名 |
 | kb_ids | JSON | NOT NULL | 勾选的知识库 id 数组，`["kb_labor","kb_civil"]` |
-| model | VARCHAR(64) | NOT NULL DEFAULT 'qwen-max' | 会话级模型 |
+| model | VARCHAR(64) | NOT NULL DEFAULT 'deepseek-v4.1-flash' | 会话级模型 |
 | temperature | DECIMAL(3,2) | NOT NULL DEFAULT 0.30 | 0.00–1.99 |
 | top_p | DECIMAL(3,2) | NOT NULL DEFAULT 0.80 | |
 | max_tokens | INT | NOT NULL DEFAULT 2048 | 256–8192 |
@@ -434,7 +434,7 @@ bge-m3 输出 `lexical_weights: dict[token_id(str) -> weight(float)]`，词表 2
 三栏结构：会话列表（左，可折叠）｜消息流（中）｜参数抽屉（右，默认收起）。
 - **知识库多选**：顶部 chip 多选（劳动法知识库/民法典知识库），选中态实心，未选提示"将检索全部"。
 - **会话管理**：`+ 新建对话` → 立即创建并聚焦输入框；列表项悬浮出现"重命名/删除"；重命名行内编辑（Enter 保存 / Esc 取消）；删除二次确认弹窗 → 乐观更新。
-- **参数面板**：模型下拉（qwen-max 默认 / qwen-plus / qwen-turbo）；温度滑块 0–1.5（默认 0.3）；topP 滑块 0.1–1（默认 0.8）；最长输出 token（数字输入，256–8192，默认 2048）；历史轮数（0–20，默认 **5**）。参数与会话绑定，切会话自动回填。
+- **参数面板**：模型下拉（deepseek-v4.1-flash 默认 / qwen-plus / qwen-turbo）；温度滑块 0–1.5（默认 0.3）；topP 滑块 0.1–1（默认 0.8）；最长输出 token（数字输入，256–8192，默认 2048）；历史轮数（0–20，默认 **5**）。参数与会话绑定，切会话自动回填。
 - **回答渲染**：Markdown + 法条引用高亮；流式打字（逐 token，非逐字，避免中文断字抖动）；底部"来源"折叠区，列出 `法名·章·条` + 相关度，点击展开该条原文。
 - **状态**：思考中显示"正在识别意图…→ 正在检索法条…→ 正在生成"三段式状态条（由 SSE `meta`/`stage` 事件驱动），比单调 loading 更能体现系统能力。
 - **容错**：流式中断 → 保留已生成内容 + 显示"回答中断，点击重试"；`degraded` 标记显示"向量库暂不可用，本次仅使用高频问答"。
@@ -931,7 +931,7 @@ Redis key 设计：
 |---|---|---|---|
 | `DASHSCOPE_API_KEY` | — | **仅系统环境变量** | 启动自检：.env 中出现即拒绝启动 |
 | `llm.base_url` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | .env | OpenAI 兼容 |
-| `llm.default_model` | `qwen-max` | .env | 可选 qwen-plus / qwen-turbo |
+| `llm.default_model` | `deepseek-v4.1-flash` | .env | 可选 qwen-plus / qwen-turbo |
 | `llm.timeout_s / max_retries` | 60 / 2 | .env | |
 | `embedding.model_path` | `C:/Users/Administrator/.cache/huggingface/hub/models--BAAI--bge-m3` | .env | **机器相关，可改** |
 | `embedding.device / fp16 / batch_size` | `cuda` / true / 16 | .env | OOM 可切 cpu |

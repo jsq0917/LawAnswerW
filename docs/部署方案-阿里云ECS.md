@@ -187,7 +187,9 @@ scp /tmp/lawanswer-src.tar.gz root@<公网IP>:/tmp/
 
 # 服务器：解包到项目目录
 cd /opt/lawanswer && tar -xzf /tmp/lawanswer-src.tar.gz
-chown -R lawanswer:lawanswer /opt/lawanswer
+# 只改代码/配置，volumes/ 交给容器自己的 uid（redis=999、mysql=999）
+# 切勿 chown -R /opt/lawanswer：属主变 994 后 redis bgsave 会 Permission denied
+find /opt/lawanswer -maxdepth 1 -mindepth 1 ! -name volumes -exec chown -R lawanswer:lawanswer {} +
 ls /opt/lawanswer        # 应看到 app/ config.py data/ frontend/dist mysql/ scripts/ 等
 ```
 
@@ -565,12 +567,28 @@ scp /tmp/lawanswer-src.tar.gz root@<公网IP>:/tmp/
 # 服务器：解包（不覆盖模型与数据）+ 重启
 cd /opt/lawanswer
 tar -xzf /tmp/lawanswer-src.tar.gz
-chown -R lawanswer:lawanswer /opt/lawanswer
+# 只改代码/配置，volumes/ 交给容器自己的 uid（redis=999、mysql=999）
+# 切勿 chown -R /opt/lawanswer：属主变 994 后 redis bgsave 会 Permission denied
+find /opt/lawanswer -maxdepth 1 -mindepth 1 ! -name volumes -exec chown -R lawanswer:lawanswer {} +
 systemctl restart lawanswer-api
 nginx -s reload          # 前端 dist 变了才需要
 ```
 
 > 切记别用 `tar` 覆盖 `volumes/` 和 `models/`。上面打包时已排除这两个目录，故解包不会动它们。
+
+**发版后的"点击没反应"陷阱**：`vite build` 会给每个懒加载页面产出带内容哈希的分块（如
+`KbManageView-Dn-tspRA.js`），并按 `emptyOutDir` 清掉上一版。若用户浏览器里还是**旧的标签页**
+（或 `index.html` 被中间层缓存），它手里仍是旧哈希清单：当前页能正常用，但点击一个尚未访问过的
+导航（典型就是左侧"知识库"）会去取已被删除的旧分块，动态 import 失败 → vue-router 静默中止导航，
+表现为"点了没反应"，只有控制台有 404。
+
+前端已加兜底（`frontend/src/router/index.ts` 的 `router.onError`）：识别到分块加载失败会自动整页
+重载到目标路由、换取最新资源清单，同一目标只重试一次，仍失败则提示 `Ctrl+F5`。部署侧同时保证：
+
+1. `location = /index.html` 必须带 `Cache-Control: no-cache`（`deploy/nginx-lawanswer.conf` 已含），
+   否则浏览器会长期沿用旧清单；
+2. 若有 CDN/对象存储在前，务必给 `index.html` 配不缓存、给 `assets/*` 配长缓存；
+3. 发版后自己先强刷一次再验收，别用发版前就开着的标签页点。
 
 ---
 
