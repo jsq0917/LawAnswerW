@@ -9,6 +9,8 @@ export default defineConfig({
     alias: {'@': fileURLToPath(new URL('./src', import.meta.url))},
   },
   server: {
+    // 对局域网开放：其他电脑可通过 http://<本机IP>:5180 访问
+    host: true,
     port: 5180,
     proxy: {
       // 前端只认 /api，后端跑在 8101（8000/8100 在本机无法 bind）
